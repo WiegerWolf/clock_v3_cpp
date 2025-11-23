@@ -1,5 +1,11 @@
 {
   "dependencies": [
-    "curl"
+    "cpr",
+    "nlohmann-json",
+    {
+      "name": "sdl3",
+      "features": ["x11"],
+      "default-features": false
+    }
   ]
 }
