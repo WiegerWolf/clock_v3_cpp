@@ -1,2 +1,6 @@
 CMakeUserPresets.json
 build/
+cmake-build-debug/
+.idea/
+.zed/
+.cache/
