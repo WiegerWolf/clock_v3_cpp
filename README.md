@@ -1,24 +1,17 @@
 # Development
 
+## Dependencies
+
+- [vcpkg](https://github.com/microsoft/vcpkg)
+
 ## Setting up build system
 
-Create a CMakeUserPresets.json file in the root directory of your project:
+Set `VCPKG_ROOT` environment variable to the path of your vcpkg installation:
 
-```json
-{
-  "version": 2,
-  "configurePresets": [
-    {
-      "name": "default",
-      "inherits": "release",
-      "environment": {
-        "VCPKG_ROOT": "~/vcpkg"
-      }
-    }
-  ]
-}
+```sh
+export VCPKG_ROOT=~/vcpkg
 ```
 
-Then run `cmake --preset default` to generate the build system and `cmake --build --preset default` to build the project.
+Then run `cmake --preset release` to generate the build system and `cmake --build --preset release` to build the project.
 
 To build debug version, run `cmake --preset debug` and then `cmake --build --preset debug`.
