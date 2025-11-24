@@ -22,7 +22,7 @@ static SDL_Window *window;
 static SDL_Renderer *renderer;
 
 struct AppState {
-    Uint64 lastPerformanceCounter;
+  Uint64 lastPerformanceCounter;
 };
 
 string getBgImageUrl() {
@@ -40,8 +40,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   SDL_Init(SDL_INIT_VIDEO);
   SDL_CreateWindowAndRenderer("Digital Clock v3", 1024, 600,
                               SDL_WINDOW_RESIZABLE, &window, &renderer);
-  AppState app_state = {};
-  *appstate = &app_state;
+  auto *state = new AppState();
+  state->lastPerformanceCounter = SDL_GetPerformanceCounter();
+
+  *appstate = state;
   /* This should be in a background thread
   string bg_image_url = getBgImageUrl();
   Response bg_image =
@@ -59,12 +61,20 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
+  auto *state = static_cast<AppState *>(appstate);
+
+  Uint64 now = SDL_GetPerformanceCounter();
+  Uint64 diff = now - state->lastPerformanceCounter;
+
+  double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
+  state->lastPerformanceCounter = now;
+
   SDL_SetRenderDrawColor(renderer, 0, 100, 100, 255);
   SDL_RenderClear(renderer);
-  auto fps = SDL_GetPerformanceCounter();
+
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-  SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %ld", fps-appstate->lastPerformanceCounter);
-  appstate->lastPerformanceCounter = fps;
+  SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", 1.0 / frameTimeS);
+
   SDL_RenderPresent(renderer);
   return SDL_APP_CONTINUE;
 }
