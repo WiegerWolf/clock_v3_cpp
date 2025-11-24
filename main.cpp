@@ -62,20 +62,26 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
   auto *state = static_cast<AppState *>(appstate);
+  
+  double target_fps = 60.0;
+  double target_frame_time = 1.0 / target_fps;
 
   Uint64 now = SDL_GetPerformanceCounter();
   Uint64 diff = now - state->lastPerformanceCounter;
+  state->lastPerformanceCounter = now;
 
   double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
-  state->lastPerformanceCounter = now;
+  double fps = 1.0 / frameTimeS;
 
   SDL_SetRenderDrawColor(renderer, 0, 100, 100, 255);
   SDL_RenderClear(renderer);
 
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-  SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", 1.0 / frameTimeS);
+  SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
 
   SDL_RenderPresent(renderer);
+  
+  SDL_Delay(target_frame_time * 1000);
   return SDL_APP_CONTINUE;
 }
 
