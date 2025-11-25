@@ -2,21 +2,34 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "release",
+      "name": "common",
+      "hidden": true,
       "generator": "Ninja",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    },
+    {
+      "name": "release",
+      "inherits": "common",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
       "name": "debug",
-      "generator": "Ninja",
+      "inherits": "common",
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "debug-arm",
+      "inherits": "debug",
+      "binaryDir": "${sourceDir}/build/debug-arm",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "arm-linux",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/raspi-toolchain.cmake"
       }
     }
   ],
@@ -28,6 +41,10 @@
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "debug-arm",
+      "configurePreset": "debug-arm"
     }
   ]
 }
