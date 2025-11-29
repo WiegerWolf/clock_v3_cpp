@@ -1,0 +1,44 @@
+[settings]
+arch=x86_64
+build_type=Release
+compiler=gcc
+compiler.cppstd=gnu17
+compiler.libcxx=libstdc++11
+compiler.version=15
+os=Linux
+
+[options]
+# Disable Audio subsystems
+sdl/*:audio=False
+sdl/*:alsa=False
+sdl/*:pulseaudio=False
+sdl/*:sndio=False
+
+# Disable Input/Haptics/Sensors
+sdl/*:haptic=False
+sdl/*:joystick=False
+sdl/*:sensor=False
+sdl/*:hidapi=False
+sdl/*:libusb=False
+sdl/*:xinput=False
+sdl/*:xscrnsaver=False
+sdl/*:libiconv=False
+
+# Disable Camera
+sdl/*:camera=False
+
+# Disable dbus
+sdl/*:dbus=False
+sdl/*:power=False
+sdl/*:dialog=False
+sdl/*:libudev=False
+
+# Keep Video/Graphics
+sdl/*:video=True
+sdl/*:wayland=True
+sdl/*:x11=True
+sdl/*:opengl=True
+sdl/*:opengles=True
+
+# Disable things we don't need in Wayland
+wayland/*:enable_libraries=False
