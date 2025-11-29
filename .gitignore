@@ -5,3 +5,4 @@ cmake-build-debug/
 .zed/
 .cache/
 pi_sysroot/
+__cmake_systeminformation/
