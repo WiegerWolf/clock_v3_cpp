@@ -1,6 +1,4 @@
-Here be some architecture notes on what we're building
-
-## Background Image API
+# Background Image API
 
 https://peapix.com/bing/feed?country=us
 
@@ -29,3 +27,8 @@ would return JSON, that looks like:
   }
 ]
 ```
+
+# clangd LSP Integration
+
+To get your editor pick up on dependencies headers, compile your project once in debug mode.
+Then run `ln -s build/debug/compile_commands.json` in the root of your project and restart clangd.

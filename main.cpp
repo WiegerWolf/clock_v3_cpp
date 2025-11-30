@@ -37,9 +37,15 @@ string getBgImageUrl() {
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   SDL_SetAppMetadata("Digital Clock v3", "0.1.0", nullptr);
-  SDL_Init(SDL_INIT_VIDEO);
-  SDL_CreateWindowAndRenderer("Digital Clock v3", 1024, 600,
-                              SDL_WINDOW_RESIZABLE, &window, &renderer);
+  if (!SDL_Init(SDL_INIT_VIDEO)) {
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+  }
+  if (!SDL_CreateWindowAndRenderer("Digital Clock v3", 1024, 600,
+                                   SDL_WINDOW_RESIZABLE, &window, &renderer)) {
+    SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+  }
   auto *state = new AppState();
   state->lastPerformanceCounter = SDL_GetPerformanceCounter();
 
@@ -62,7 +68,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
   auto *state = static_cast<AppState *>(appstate);
-  
+
   double target_fps = 60.0;
   double target_frame_time = 1.0 / target_fps;
 
@@ -80,7 +86,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
 
   SDL_RenderPresent(renderer);
-  
+
   SDL_Delay(target_frame_time * 1000);
   return SDL_APP_CONTINUE;
 }
