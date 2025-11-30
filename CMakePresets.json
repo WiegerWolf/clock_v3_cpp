@@ -26,10 +26,7 @@
       "name": "debug-arm",
       "inherits": "debug",
       "binaryDir": "${sourceDir}/build/debug-arm",
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "arm-linux",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/raspi-toolchain.cmake"
-      }
+      "toolchainFile": "${sourceDir}/raspi-toolchain.cmake"
     }
   ],
   "buildPresets": [
