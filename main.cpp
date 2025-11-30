@@ -46,6 +46,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
     return SDL_APP_FAILURE;
   }
+  if (!SDL_HideCursor()) {
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
+  }
   auto *state = new AppState();
   state->lastPerformanceCounter = SDL_GetPerformanceCounter();
 
@@ -79,10 +82,10 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
   double fps = 1.0 / frameTimeS;
 
-  SDL_SetRenderDrawColor(renderer, 0, 100, 100, 255);
+  SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
-  SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+  SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
 
   SDL_RenderPresent(renderer);
