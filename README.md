@@ -1,18 +1,6 @@
-# Development
+# Building
 
-## Dependencies
-
-- [vcpkg](https://github.com/microsoft/vcpkg)
-
-## Setting up build system
-
-Set `VCPKG_ROOT` environment variable to the path of your vcpkg installation:
-
-```sh
-export VCPKG_ROOT=~/vcpkg
-```
-
-Then run `cmake --preset release` to generate the build system and `cmake --build --preset release` to build the project.
+Run `cmake --preset release` to generate the build system and `cmake --build --preset release` to build the project.
 
 To build debug version, run `cmake --preset debug` and then `cmake --build --preset debug`.
 
@@ -22,8 +10,8 @@ To build debug version, run `cmake --preset debug` and then `cmake --build --pre
 
 You need to setup `./pi_sysroot` folder. Connect your RPi SD card to your computer and mount it.
 And no, you can't just copy the files from the SD card img file you downloaded from the Raspberry Pi website.
-You need the actual files from the SD card you're running on. Alternatively, you can do the below over the network, but
-plugging in the SD card and mounting it is faster.
+You need the actual files from the SD card you're running on. *Alternatively, you can run `./pi_sysroot.sh <username> <hostname>` to 
+do the below over the network,* but plugging in the SD card and mounting it is sometimes faster.
 
 Then run while being inside `/` on the `rootfs` partition (replace `~/clock_v3_cpp/pi_sysroot` with the actual path):
 
@@ -38,7 +26,6 @@ then use `sudo symlinks -rc ~/clock_v3_cpp/pi_sysroot` to fix symlinks.
 ## Cross-compiling
 
 ```sh
-cmake --preset debug-arm # this will say "Could not find a package configuration file provided by..."
-cmake --preset debug-arm # run this again to fix the error and finish configuring
+cmake --preset debug-arm
 cmake --build --preset debug-arm
 ```

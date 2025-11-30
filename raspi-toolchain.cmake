@@ -1,8 +1,8 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
-set(CMAKE_C_COMPILER armv7-rpi2-linux-gnueabihf-gcc)
-set(CMAKE_CXX_COMPILER armv7-rpi2-linux-gnueabihf-g++)
+set(CMAKE_C_COMPILER arm-linux-gnueabihf-gcc)
+set(CMAKE_CXX_COMPILER arm-linux-gnueabihf-g++)
 
 get_filename_component(MY_SYSROOT "${CMAKE_CURRENT_LIST_DIR}/pi_sysroot" ABSOLUTE)
 set(CMAKE_SYSROOT ${MY_SYSROOT})
