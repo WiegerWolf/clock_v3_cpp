@@ -49,6 +49,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   if (!SDL_HideCursor()) {
     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
   }
+  
   auto *state = new AppState();
   state->lastPerformanceCounter = SDL_GetPerformanceCounter();
 
