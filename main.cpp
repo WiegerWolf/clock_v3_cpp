@@ -34,6 +34,7 @@ string getBgImageUrl() {
 
   // https://json.nlohmann.me/features/parsing/json_lines/
   json response_json = json::parse(response.text);
+  // TODO: instead of grabbing the first image, grab the image with today's date
   auto first_image = response_json.get<vector<Image>>()[0];
   return first_image.fullUrl;
 }
@@ -60,10 +61,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
                     SDL_GetError());
     return SDL_APP_FAILURE;
   }
-  if (!SDL_CreateWindowAndRenderer("Digital Clock v3", 1024, 600,
+  // Screen dimensions in pixels
+  int w = 1024;
+  int h = 600;
+  if (!SDL_CreateWindowAndRenderer("Digital Clock v3", w, h,
                                    SDL_WINDOW_RESIZABLE, &window, &renderer)) {
     SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
     return SDL_APP_FAILURE;
+  }
+  if (!SDL_SetRenderLogicalPresentation(renderer, w, h,
+                                        SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                "Couldn't set logical presentation: %s", SDL_GetError());
   }
   if (!SDL_HideCursor()) {
     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s",
@@ -102,9 +111,6 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
   double fps = 1.0 / frameTimeS;
 
-  SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
-  SDL_RenderClear(renderer);
-
   if (state->bg_image) {
     SDL_Texture *bg_texture =
         SDL_CreateTextureFromSurface(renderer, state->bg_image);
@@ -118,7 +124,11 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     state->bg_image = nullptr;
   }
 
+  SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
+  SDL_RenderClear(renderer);
+
   if (state->bg_texture) {
+    // TODO: instead of drawing the texture stretched, set up cover scaling
     SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
   }
 
