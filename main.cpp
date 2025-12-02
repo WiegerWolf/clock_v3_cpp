@@ -19,7 +19,7 @@ using json = nlohmann::json;
 
 struct Image {
   string fullUrl;
-  string date;
+  string date; // format "2025-11-22"
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Image, fullUrl, date)
 
@@ -42,6 +42,10 @@ struct AppState {
   string last_time_str;
   SDL_Texture *time_texture;
   SDL_FRect time_rect;
+
+  string last_date_str;
+  SDL_Texture *date_texture;
+  SDL_FRect date_rect;
 };
 
 string getCurrentTime() {
@@ -53,6 +57,20 @@ string getCurrentTime() {
     oss << '0';
   }
   oss << tm.tm_min;
+  return oss.str();
+}
+
+string getCurrentDate() {
+  auto t = time(nullptr);
+  auto tm = *localtime(&t);
+  vector<string> weekdays = {"воскресенье", "понедельник", "вторник", "среда",
+                             "четверг",     "пятница",     "суббота"};
+  vector<string> months = {"января",   "февраля", "марта",  "апреля",
+                           "мая",      "июня",    "июля",   "августа",
+                           "сентября", "октября", "ноября", "декабря"};
+  ostringstream oss;
+  oss << weekdays[tm.tm_wday] << ", " << tm.tm_mday << " " << months[tm.tm_mon]
+      << " " << (1900 + tm.tm_year) << " года";
   return oss.str();
 }
 
@@ -147,6 +165,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   state->bg_texture = nullptr;
   state->time_texture = nullptr;
   state->last_time_str = "";
+  state->date_texture = nullptr;
+  state->last_date_str = "";
 
   *appstate = state;
 
@@ -183,10 +203,10 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
   double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
   double fps = 1.0 / frameTimeS;
+  SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
 
   string current_time_str = getCurrentTime();
   if (current_time_str != state->last_time_str) {
-    SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
     SDL_Surface *timeSurface =
         TTF_RenderText_Blended(fontBig, current_time_str.c_str(), 0, white);
     if (timeSurface) {
@@ -202,10 +222,32 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         state->time_rect.w = (float)timeSurface->w;
         state->time_rect.h = (float)timeSurface->h;
         state->time_rect.x = ((float)screen_width - state->time_rect.w) / 2.0f;
-        state->time_rect.y = ((float)screen_height - state->time_rect.h) / 2.0f;
+        state->time_rect.y = ((float)screen_height - state->time_rect.h) / 2.0f - 40.0f;
       }
       SDL_DestroySurface(timeSurface);
       state->last_time_str = current_time_str;
+    }
+  }
+  string current_date_str = getCurrentDate();
+  if (current_date_str != state->last_date_str) {
+    SDL_Surface *dateSurface =
+        TTF_RenderText_Blended(fontSmall, current_date_str.c_str(), 0, white);
+    if (dateSurface) {
+      if (state->date_texture) {
+        SDL_DestroyTexture(state->date_texture);
+      }
+      state->date_texture = SDL_CreateTextureFromSurface(renderer, dateSurface);
+      if (!state->date_texture) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Failed to create texture from surface: %s", SDL_GetError());
+      } else {
+        state->date_rect.w = (float)dateSurface->w;
+        state->date_rect.h = (float)dateSurface->h;
+        state->date_rect.x = ((float)screen_width - state->date_rect.w) / 2.0f;
+        state->date_rect.y = 30.0f;
+      }
+      SDL_DestroySurface(dateSurface);
+      state->last_date_str = current_date_str;
     }
   }
 
@@ -227,7 +269,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   }
   SDL_UnlockMutex(state->mutex);
 
-  SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
+  SDL_SetRenderDrawColor(renderer, 0, 128, 128, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
   if (state->bg_texture) {
@@ -235,7 +277,28 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
   }
 
+  if (state->date_texture) {
+    SDL_SetTextureColorMod(state->date_texture, 0, 0, 0);
+    SDL_SetTextureAlphaMod(state->date_texture, 128);
+    SDL_FRect shadowRect = state->date_rect;
+    shadowRect.x += 1;
+    shadowRect.y += 1;
+    SDL_RenderTexture(renderer, state->date_texture, nullptr, &shadowRect);
+    SDL_SetTextureColorMod(state->date_texture, 255, 255, 255);
+    SDL_SetTextureAlphaMod(state->date_texture, 255);
+    SDL_RenderTexture(renderer, state->date_texture, nullptr,
+                      &state->date_rect);
+  }
+
   if (state->time_texture) {
+    SDL_SetTextureColorMod(state->time_texture, 0, 0, 0);
+    SDL_SetTextureAlphaMod(state->time_texture, 128);
+    SDL_FRect shadowRect = state->time_rect;
+    shadowRect.x += 1;
+    shadowRect.y += 1;
+    SDL_RenderTexture(renderer, state->time_texture, nullptr, &shadowRect);
+    SDL_SetTextureColorMod(state->time_texture, 255, 255, 255);
+    SDL_SetTextureAlphaMod(state->time_texture, 255);
     SDL_RenderTexture(renderer, state->time_texture, nullptr,
                       &state->time_rect);
   }
@@ -256,6 +319,9 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
   }
   if (state->time_texture) {
     SDL_DestroyTexture(state->time_texture);
+  }
+  if (state->date_texture) {
+    SDL_DestroyTexture(state->date_texture);
   }
 
   // Note: We deliberately leak the mutex and surface wrapper to avoid
