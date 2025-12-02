@@ -104,6 +104,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 
   *appstate = state;
 
+  // TODO: kick this off every 24 hours
   SDL_Thread *bg_image_loader_thread =
       SDL_CreateThread(bgImageLoaderThread, "bgImageLoaderThread", state);
   if (!bg_image_loader_thread) {
@@ -111,7 +112,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
                  "Couldn't create background image loader thread: %s",
                  SDL_GetError());
   } else {
-      SDL_DetachThread(bg_image_loader_thread);
+    SDL_DetachThread(bg_image_loader_thread);
   }
 
   return SDL_APP_CONTINUE;
