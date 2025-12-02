@@ -1,5 +1,5 @@
 #define SDL_MAIN_USE_CALLBACKS 1
-// https://wiki.libsdl.org/SDL3/README-main-functions
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
@@ -15,10 +15,8 @@ struct Image {
   string fullUrl;
   string date;
 };
-// https://json.nlohmann.me/features/arbitrary_types/#simplify-your-life-with-macros
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Image, fullUrl, date)
 
-// https://examples.libsdl.org/SDL3/renderer/01-clear/
 static SDL_Window *window;
 static SDL_Renderer *renderer;
 
@@ -30,10 +28,7 @@ struct AppState {
 };
 
 string getBgImageUrl() {
-  // https://docs.libcpr.dev/introduction.html#get-requests
   Response response = Get(Url{"https://peapix.com/bing/feed?country=us"});
-
-  // https://json.nlohmann.me/features/parsing/json_lines/
   json response_json = json::parse(response.text);
   // TODO: instead of grabbing the first image, grab the image with today's date
   auto first_image = response_json.get<vector<Image>>()[0];
@@ -78,7 +73,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
                     SDL_GetError());
     return SDL_APP_FAILURE;
   }
-  // Screen dimensions in pixels
+  // RPi Screen dimensions in pixels
   int w = 1024;
   int h = 600;
   if (!SDL_CreateWindowAndRenderer("Digital Clock v3", w, h,
@@ -121,9 +116,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
   if (event->type == SDL_EVENT_QUIT) {
     auto *state = static_cast<AppState *>(appstate);
-    SDL_DestroyTexture(state->bg_texture);
-    SDL_DestroyMutex(state->mutex);
-    delete state;
+    if (state->bg_texture) {
+      SDL_DestroyTexture(state->bg_texture);
+    }
+    // Note: We deliberately leak the mutex and surface wrapper to avoid
+    // crashing the worker thread. We let the OS clean up the memory when the
+    // process exits.
     return SDL_APP_SUCCESS;
   }
   return SDL_APP_CONTINUE;
@@ -150,6 +148,9 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                   "Failed to create texture from surface: %s", SDL_GetError());
     } else {
+      if (state->bg_texture) {
+        SDL_DestroyTexture(state->bg_texture); // so we don't leak VRAM
+      }
       state->bg_texture = bg_texture;
     }
     SDL_DestroySurface(state->bg_image);
@@ -160,12 +161,10 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
-  SDL_LockMutex(state->mutex);
   if (state->bg_texture) {
     // TODO: instead of drawing the texture stretched, set up cover scaling
     SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
   }
-  SDL_UnlockMutex(state->mutex);
 
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
