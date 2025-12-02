@@ -8,6 +8,10 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
 #include "font_data.h"
 
 using namespace cpr;
@@ -23,15 +27,31 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Image, fullUrl, date)
 namespace {
 SDL_Window *window;
 SDL_Renderer *renderer;
-TTF_Font *font;
+TTF_Font *fontBig;
+TTF_Font *fontSmall;
+const int screen_width = 1024;
+const int screen_height = 600;
 } // anonymous namespace
 
 struct AppState {
   Uint64 lastPerformanceCounter;
   SDL_Mutex *mutex;
+
   SDL_Surface *bg_image;
   SDL_Texture *bg_texture;
+
+  string last_time_str;
+  SDL_Texture *time_texture;
+  SDL_FRect time_rect;
 };
+
+string getCurrentTime() {
+  auto t = time(nullptr);
+  auto tm = *localtime(&t);
+  ostringstream oss;
+  oss << put_time(&tm, "%H:%M");
+  return oss.str();
+}
 
 string getBgImageUrl() {
   Response response = Get(Url{"https://peapix.com/bing/feed?country=us"});
@@ -79,11 +99,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
                     SDL_GetError());
     return SDL_APP_FAILURE;
   }
-  // RPi Screen dimensions in pixels
-  int w = 1024;
-  int h = 600;
-  if (!SDL_CreateWindowAndRenderer("Digital Clock v3", w, h,
-                                   SDL_WINDOW_RESIZABLE, &window, &renderer)) {
+  if (!SDL_CreateWindowAndRenderer("Digital Clock v3", screen_width,
+                                   screen_height, SDL_WINDOW_RESIZABLE, &window,
+                                   &renderer)) {
     SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
                     "Couldn't create window/renderer: %s", SDL_GetError());
     return SDL_APP_FAILURE;
@@ -95,13 +113,21 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   }
   SDL_IOStream *font_stream =
       SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
-  font = TTF_OpenFontIO(font_stream, true, 48);
-  if (!font) {
+  fontSmall = TTF_OpenFontIO(font_stream, true, 48);
+  if (!fontSmall) {
     SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
                     "Couldn't open embedded font: %s", SDL_GetError());
     return SDL_APP_FAILURE;
   }
-  if (!SDL_SetRenderLogicalPresentation(renderer, w, h,
+  // passing closeio false here, cause we're reusing font_stream from fontSmall
+  // and we don't want to double free the stream when we TTF_CloseFont(fontBig);
+  fontBig = TTF_OpenFontIO(font_stream, false, 420);
+  if (!fontBig) {
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                    "Couldn't open embedded font: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+  }
+  if (!SDL_SetRenderLogicalPresentation(renderer, screen_width, screen_height,
                                         SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                 "Couldn't set logical presentation: %s", SDL_GetError());
@@ -116,6 +142,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   state->mutex = SDL_CreateMutex();
   state->bg_image = nullptr;
   state->bg_texture = nullptr;
+  state->time_texture = nullptr;
+  state->last_time_str = "";
 
   *appstate = state;
 
@@ -153,6 +181,31 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
   double fps = 1.0 / frameTimeS;
 
+  string current_time_str = getCurrentTime();
+  if (current_time_str != state->last_time_str) {
+    SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
+    SDL_Surface *timeSurface =
+        TTF_RenderText_Blended(fontBig, current_time_str.c_str(), 0, white);
+    if (timeSurface) {
+      if (state->time_texture) {
+        SDL_DestroyTexture(state->time_texture);
+      }
+      state->time_texture = SDL_CreateTextureFromSurface(renderer, timeSurface);
+      if (!state->time_texture) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Failed to create texture from surface: %s",
+                    SDL_GetError());
+      } else {
+        state->time_rect.w = (float)timeSurface->w;
+        state->time_rect.h = (float)timeSurface->h;
+        state->time_rect.x = ((float)screen_width - state->time_rect.w) / 2.0f;
+        state->time_rect.y = ((float)screen_height - state->time_rect.h) / 2.0f;
+      }
+      SDL_DestroySurface(timeSurface);
+      state->last_time_str = current_time_str;
+    }
+  }
+
   SDL_LockMutex(state->mutex);
   if (state->bg_image) {
     SDL_Texture *bg_texture =
@@ -179,10 +232,14 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
   }
 
+  if (state->time_texture) {
+    SDL_RenderTexture(renderer, state->time_texture, nullptr,
+                      &state->time_rect);
+  }
+
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
 
-  
   SDL_RenderPresent(renderer);
 
   SDL_Delay(target_frame_time * 1000);
@@ -194,13 +251,21 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
   if (state->bg_texture) {
     SDL_DestroyTexture(state->bg_texture);
   }
+  if (state->time_texture) {
+    SDL_DestroyTexture(state->time_texture);
+  }
+
   // Note: We deliberately leak the mutex and surface wrapper to avoid
   // crashing the worker thread. We let the OS clean up the memory when the
   // process exits.
 
-  if (font) {
-    TTF_CloseFont(font);
-    font = nullptr;
+  if (fontSmall) {
+    TTF_CloseFont(fontSmall);
+    fontSmall = nullptr;
+  }
+  if (fontBig) {
+    TTF_CloseFont(fontBig);
+    fontBig = nullptr;
   }
   TTF_Quit();
 }
