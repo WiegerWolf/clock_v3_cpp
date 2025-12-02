@@ -29,3 +29,7 @@ then use `sudo symlinks -rc ~/clock_v3_cpp/pi_sysroot` to fix symlinks.
 cmake --preset debug-arm
 cmake --build --preset debug-arm
 ```
+
+# Attribution
+
+- BellotaText Bold font used in this project is licensed under the [Open Font License](https://openfontlicense.org).

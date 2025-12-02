@@ -3,9 +3,12 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
+
+#include "font_data.h"
 
 using namespace cpr;
 using namespace std;
@@ -17,8 +20,11 @@ struct Image {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Image, fullUrl, date)
 
-static SDL_Window *window;
-static SDL_Renderer *renderer;
+namespace {
+SDL_Window *window;
+SDL_Renderer *renderer;
+TTF_Font *font;
+} // anonymous namespace
 
 struct AppState {
   Uint64 lastPerformanceCounter;
@@ -78,7 +84,21 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   int h = 600;
   if (!SDL_CreateWindowAndRenderer("Digital Clock v3", w, h,
                                    SDL_WINDOW_RESIZABLE, &window, &renderer)) {
-    SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                    "Couldn't create window/renderer: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+  }
+  if (!TTF_Init()) {
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                    "Couldn't initialize SDL_ttf: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+  }
+  SDL_IOStream *font_stream =
+      SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
+  font = TTF_OpenFontIO(font_stream, true, 48);
+  if (!font) {
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
+                    "Couldn't open embedded font: %s", SDL_GetError());
     return SDL_APP_FAILURE;
   }
   if (!SDL_SetRenderLogicalPresentation(renderer, w, h,
@@ -115,13 +135,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
   if (event->type == SDL_EVENT_QUIT) {
-    auto *state = static_cast<AppState *>(appstate);
-    if (state->bg_texture) {
-      SDL_DestroyTexture(state->bg_texture);
-    }
-    // Note: We deliberately leak the mutex and surface wrapper to avoid
-    // crashing the worker thread. We let the OS clean up the memory when the
-    // process exits.
     return SDL_APP_SUCCESS;
   }
   return SDL_APP_CONTINUE;
@@ -169,10 +182,25 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
 
+  
   SDL_RenderPresent(renderer);
 
   SDL_Delay(target_frame_time * 1000);
   return SDL_APP_CONTINUE;
 }
 
-void SDL_AppQuit(void *appstate, SDL_AppResult result) {}
+void SDL_AppQuit(void *appstate, SDL_AppResult result) {
+  auto *state = static_cast<AppState *>(appstate);
+  if (state->bg_texture) {
+    SDL_DestroyTexture(state->bg_texture);
+  }
+  // Note: We deliberately leak the mutex and surface wrapper to avoid
+  // crashing the worker thread. We let the OS clean up the memory when the
+  // process exits.
+
+  if (font) {
+    TTF_CloseFont(font);
+    font = nullptr;
+  }
+  TTF_Quit();
+}
