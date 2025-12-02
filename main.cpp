@@ -9,7 +9,6 @@
 #include <nlohmann/json.hpp>
 
 #include <ctime>
-#include <iomanip>
 #include <sstream>
 
 #include "font_data.h"
@@ -49,7 +48,11 @@ string getCurrentTime() {
   auto t = time(nullptr);
   auto tm = *localtime(&t);
   ostringstream oss;
-  oss << put_time(&tm, "%H:%M");
+  oss << tm.tm_hour << ':';
+  if (tm.tm_min < 10) {
+    oss << '0';
+  }
+  oss << tm.tm_min;
   return oss.str();
 }
 
@@ -121,7 +124,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   }
   // passing closeio false here, cause we're reusing font_stream from fontSmall
   // and we don't want to double free the stream when we TTF_CloseFont(fontBig);
-  fontBig = TTF_OpenFontIO(font_stream, false, 420);
+  fontBig = TTF_OpenFontIO(font_stream, false, 382);
   if (!fontBig) {
     SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION,
                     "Couldn't open embedded font: %s", SDL_GetError());
