@@ -2,6 +2,7 @@
 // https://wiki.libsdl.org/SDL3/README-main-functions
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <SDL3_image/SDL_image.h>
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -23,6 +24,8 @@ static SDL_Renderer *renderer;
 
 struct AppState {
   Uint64 lastPerformanceCounter;
+  SDL_Surface *bg_image;
+  SDL_Texture *bg_texture;
 };
 
 string getBgImageUrl() {
@@ -35,10 +38,26 @@ string getBgImageUrl() {
   return first_image.fullUrl;
 }
 
+SDL_Surface *get_bg_image() {
+  string bg_image_url = getBgImageUrl();
+  Response bg_image =
+      Get(Url{bg_image_url},
+          ReserveSize{1024 * 1024}); // Increase reserve size to 1MB
+  SDL_IOStream *bg_image_data_stream =
+      SDL_IOFromConstMem(bg_image.text.data(), bg_image.text.size());
+  SDL_Surface *bg_image_surface = IMG_Load_IO(bg_image_data_stream, true);
+  if (!bg_image_surface) {
+    SDL_Log("Couldn't load background image: %s", SDL_GetError());
+    return nullptr;
+  }
+  return bg_image_surface;
+}
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   SDL_SetAppMetadata("Digital Clock v3", "0.1.0", nullptr);
   if (!SDL_Init(SDL_INIT_VIDEO)) {
-    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL: %s", SDL_GetError());
+    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL: %s",
+                    SDL_GetError());
     return SDL_APP_FAILURE;
   }
   if (!SDL_CreateWindowAndRenderer("Digital Clock v3", 1024, 600,
@@ -47,24 +66,24 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     return SDL_APP_FAILURE;
   }
   if (!SDL_HideCursor()) {
-    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s",
+                SDL_GetError());
   }
-  
+
   auto *state = new AppState();
   state->lastPerformanceCounter = SDL_GetPerformanceCounter();
+  state->bg_image = get_bg_image();
 
   *appstate = state;
-  /* This should be in a background thread
-  string bg_image_url = getBgImageUrl();
-  Response bg_image =
-      Get(Url{bg_image_url},
-          ReserveSize{1024 * 1024}); // Increase reserve size to 1MB
-          */
+
   return SDL_APP_CONTINUE;
 }
 
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
   if (event->type == SDL_EVENT_QUIT) {
+    auto *state = static_cast<AppState *>(appstate);
+    SDL_DestroyTexture(state->bg_texture);
+    delete state;
     return SDL_APP_SUCCESS;
   }
   return SDL_APP_CONTINUE;
@@ -85,6 +104,23 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
   SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
+
+  if (state->bg_image) {
+    SDL_Texture *bg_texture =
+        SDL_CreateTextureFromSurface(renderer, state->bg_image);
+    if (!bg_texture) {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                  "Failed to create texture from surface: %s", SDL_GetError());
+    } else {
+      state->bg_texture = bg_texture;
+    }
+    SDL_DestroySurface(state->bg_image);
+    state->bg_image = nullptr;
+  }
+
+  if (state->bg_texture) {
+    SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
+  }
 
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);

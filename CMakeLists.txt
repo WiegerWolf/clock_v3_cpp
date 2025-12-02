@@ -42,6 +42,11 @@ else()
 endif()
 FetchContent_MakeAvailable(SDL3)
 
+FetchContent_Declare(SDL3_Image
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL_image.git
+    GIT_TAG release-3.2.4)
+FetchContent_MakeAvailable(SDL3_Image)
+
 FetchContent_Declare(cpr
     GIT_REPOSITORY https://github.com/libcpr/cpr.git
     GIT_TAG 1.14.1)
@@ -62,5 +67,6 @@ target_link_libraries(digital_clock_v3
         cpr::cpr
         nlohmann_json::nlohmann_json
         SDL3::SDL3-static
+        SDL3_image::SDL3_image
 )
 target_link_options(digital_clock_v3 PRIVATE -static-libgcc -static-libstdc++)
