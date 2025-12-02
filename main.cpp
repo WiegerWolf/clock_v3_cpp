@@ -24,6 +24,7 @@ static SDL_Renderer *renderer;
 
 struct AppState {
   Uint64 lastPerformanceCounter;
+  SDL_Mutex *mutex;
   SDL_Surface *bg_image;
   SDL_Texture *bg_texture;
 };
@@ -54,6 +55,22 @@ SDL_Surface *get_bg_image() {
   return bg_image_surface;
 }
 
+int bgImageLoaderThread(void *data) {
+  SDL_Surface *bg_image = get_bg_image();
+  if (!bg_image) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "Failed to load background image");
+    return -1;
+  }
+
+  auto *state = static_cast<AppState *>(data);
+  SDL_LockMutex(state->mutex);
+  state->bg_image = bg_image;
+  SDL_UnlockMutex(state->mutex);
+
+  return 0;
+}
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   SDL_SetAppMetadata("Digital Clock v3", "0.1.0", nullptr);
   if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -81,9 +98,21 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 
   auto *state = new AppState();
   state->lastPerformanceCounter = SDL_GetPerformanceCounter();
-  state->bg_image = get_bg_image();
+  state->mutex = SDL_CreateMutex();
+  state->bg_image = nullptr;
+  state->bg_texture = nullptr;
 
   *appstate = state;
+
+  SDL_Thread *bg_image_loader_thread =
+      SDL_CreateThread(bgImageLoaderThread, "bgImageLoaderThread", state);
+  if (!bg_image_loader_thread) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "Couldn't create background image loader thread: %s",
+                 SDL_GetError());
+  } else {
+      SDL_DetachThread(bg_image_loader_thread);
+  }
 
   return SDL_APP_CONTINUE;
 }
@@ -92,6 +121,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
   if (event->type == SDL_EVENT_QUIT) {
     auto *state = static_cast<AppState *>(appstate);
     SDL_DestroyTexture(state->bg_texture);
+    SDL_DestroyMutex(state->mutex);
     delete state;
     return SDL_APP_SUCCESS;
   }
@@ -111,6 +141,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
   double fps = 1.0 / frameTimeS;
 
+  SDL_LockMutex(state->mutex);
   if (state->bg_image) {
     SDL_Texture *bg_texture =
         SDL_CreateTextureFromSurface(renderer, state->bg_image);
@@ -123,14 +154,17 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     SDL_DestroySurface(state->bg_image);
     state->bg_image = nullptr;
   }
+  SDL_UnlockMutex(state->mutex);
 
   SDL_SetRenderDrawColor(renderer, 0, 100, 100, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
+  SDL_LockMutex(state->mutex);
   if (state->bg_texture) {
     // TODO: instead of drawing the texture stretched, set up cover scaling
     SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
   }
+  SDL_UnlockMutex(state->mutex);
 
   SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
