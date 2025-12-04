@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <ctime>
 #include <format>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -151,12 +152,42 @@ private:
   Uint64 lastPerformanceCounter = 0;
   double fps = 0.0;
 
-  std::string cachedTime;
-  TexturePtr timeTexture;
-  SDL_FRect timeRect{};
-  std::string cachedDate;
-  TexturePtr dateTexture;
-  SDL_FRect dateRect{};
+  struct TextLabel {
+    std::string text;
+    TexturePtr texture;
+    SDL_FRect rect;
+
+    // Layout function to position the text label within the window
+    using LayoutFunc = std::function<SDL_FRect(float w, float h)>;
+
+    void update(SDL_Renderer *renderer, TTF_Font *font, std::string_view newText, SDL_Color color, LayoutFunc layout) {
+      if (text == newText && texture) return;
+      text = newText;
+      SurfacePtr surf(TTF_RenderText_Blended(font, text.c_str(), 0, color));
+      if (surf) {
+        texture.reset(SDL_CreateTextureFromSurface(renderer, surf.get()));
+        rect = layout((float)surf->w, (float)surf->h);
+      }
+    }
+
+    void draw(SDL_Renderer *renderer) const {
+      if (!texture) return;
+      // Shadow
+      SDL_SetTextureColorMod(texture.get(), 0, 0, 0);
+      SDL_SetTextureAlphaMod(texture.get(), 128);
+      SDL_FRect shadow = rect;
+      shadow.x += 1.0f;
+      shadow.y += 1.0f;
+      SDL_RenderTexture(renderer, texture.get(), nullptr, &shadow);
+      // Text
+      SDL_SetTextureColorMod(texture.get(), 255, 255, 255);
+      SDL_SetTextureAlphaMod(texture.get(), 255);
+      SDL_RenderTexture(renderer, texture.get(), nullptr, &rect);
+    }
+  };
+
+  TextLabel timeLabel;
+  TextLabel dateLabel;
 
   void FetchBackgroundImage(std::stop_token stopToken) {
     while (!stopToken.stop_requested()) {
@@ -185,8 +216,8 @@ private:
       } catch (const std::exception &e) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Background image fetch failed: %s", e.what());
       }
-      std::mutex sleepMutex;
-      std::unique_lock lock(sleepMutex);
+      std::mutex sleepMutex;             // We use a dummy mutex because the condition_variable's wait_for requires
+      std::unique_lock lock(sleepMutex); // a lock to wait on
       std::condition_variable_any().wait_for(lock, stopToken, std::chrono::hours(4),
                                              [&stopToken] { return stopToken.stop_requested(); });
     }
@@ -203,50 +234,26 @@ private:
   void UpdateTextures() {
     SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
 
-    std::string current_time = getCurrentTime();
-    if (current_time != cachedTime) {
-      cachedTime = current_time;
-      SurfacePtr surf(TTF_RenderText_Blended(fontBig.get(), cachedTime.c_str(), 0, white));
-      if (surf) {
-        timeTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), surf.get()));
-        timeRect = {(float)(Config::screen_width - surf->w) / 2.0f,
-                    (float)(Config::screen_height - surf->h) / 2.0f - 40.0f, (float)surf->w, (float)surf->h};
-      }
-    }
-    std::string current_date = getCurrentDate();
-    if (current_date != cachedDate) {
-      cachedDate = current_date;
-      SurfacePtr surf(TTF_RenderText_Blended(fontSmall.get(), cachedDate.c_str(), 0, white));
-      if (surf) {
-        dateTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), surf.get()));
-        dateRect = {(float)(Config::screen_width - surf->w) / 2.0f, 30.0f, (float)surf->w, (float)surf->h};
-      }
-    }
+    timeLabel.update(renderer.get(), fontBig.get(), getCurrentTime(), white, [](float w, float h) {
+      return SDL_FRect{(Config::screen_width - w) / 2.0f, (Config::screen_height - h) / 2.0f - 40.0f, w, h};
+    });
+    dateLabel.update(renderer.get(), fontSmall.get(), getCurrentDate(), white,
+                     [](float w, float h) { return SDL_FRect{(Config::screen_width - w) / 2.0f, 30.0f, w, h}; });
   }
 
   void Render() {
-    SDL_SetRenderDrawColor(renderer.get(), 0, 128, 128, SDL_ALPHA_OPAQUE);
+    SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(renderer.get());
 
     if (bgTexture) {
-      RenderTextureCover(bgTexture.get());
+      SDL_RenderClear(renderer.get());
     }
-    auto drawWithShadow = [&](SDL_Texture *tex, const SDL_FRect &rect) {
-      if (!tex) return;
-      SDL_SetTextureColorMod(tex, 0, 0, 0);
-      SDL_SetTextureAlphaMod(tex, 128);
-      SDL_FRect shadow = rect;
-      shadow.x += 1.0f;
-      shadow.y += 1.0f;
-      SDL_RenderTexture(renderer.get(), tex, nullptr, &shadow);
-      SDL_SetTextureColorMod(tex, 255, 255, 255);
-      SDL_SetTextureAlphaMod(tex, 255);
-      SDL_RenderTexture(renderer.get(), tex, nullptr, &rect);
-    };
-    drawWithShadow(dateTexture.get(), dateRect);
-    drawWithShadow(timeTexture.get(), timeRect);
+    dateLabel.draw(renderer.get());
+    timeLabel.draw(renderer.get());
+
     SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugTextFormat(renderer.get(), 10, 10, "FPS: %.2f", fps);
+
     SDL_RenderPresent(renderer.get());
   }
 
