@@ -10,6 +10,7 @@
 
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <ctime>
 #include <format>
 #include <memory>
@@ -125,7 +126,7 @@ public:
     UpdateTiming();
     UpdateTextures();
     {
-      std::lock_guard lock(mutex);
+      std::lock_guard lock(bgImageLoaderMutex);
       if (pendingBgImage) {
         bgTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), pendingBgImage.get()));
         pendingBgImage.reset();
@@ -142,7 +143,8 @@ private:
   FontPtr fontSmall;
 
   std::jthread bgLoaderThread;
-  std::mutex mutex;
+  std::mutex bgImageLoaderMutex;
+  std::string lastLoadedUrl;
   SurfacePtr pendingBgImage;
   TexturePtr bgTexture;
 
@@ -156,23 +158,37 @@ private:
   TexturePtr dateTexture;
   SDL_FRect dateRect{};
 
-  void FetchBackgroundImage() {
-    try {
-      cpr::Response response = cpr::Get(cpr::Url{"https://peapix.com/bing/feed?country=us"});
-      auto response_json = json::parse(response.text);
-      const auto &images = response_json.get<std::vector<BingImage>>();
-      if (images.empty()) return;
-      // TODO: instead of grabbing the first image, grab the image with today's date
-      std::string imgUrl = images[0].fullUrl;
-      cpr::Response imgResp = cpr::Get(cpr::Url{imgUrl}, cpr::ReserveSize{2 * 1024 * 1024});
-      SDL_IOStream *io = SDL_IOFromConstMem(imgResp.text.data(), imgResp.text.size());
-      SurfacePtr loadedSurf(IMG_Load_IO(io, true));
-      if (loadedSurf) {
-        std::lock_guard lock(mutex);
-        pendingBgImage = std::move(loadedSurf);
+  void FetchBackgroundImage(std::stop_token stopToken) {
+    while (!stopToken.stop_requested()) {
+      try {
+        cpr::Response response = cpr::Get(cpr::Url{"https://peapix.com/bing/feed?country=us"});
+        if (response.status_code == 200) {
+          auto response_json = json::parse(response.text);
+          const auto &images = response_json.get<std::vector<BingImage>>();
+          if (!images.empty()) {
+            // TODO: instead of grabbing the first image, grab the image with today's date
+            std::string imgUrl = images[0].fullUrl;
+            if (imgUrl != lastLoadedUrl) {
+              cpr::Response imgResp = cpr::Get(cpr::Url{imgUrl}, cpr::ReserveSize{2 * 1024 * 1024});
+              if (imgResp.status_code == 200) {
+                SDL_IOStream *io = SDL_IOFromConstMem(imgResp.text.data(), imgResp.text.size());
+                SurfacePtr loadedSurf(IMG_Load_IO(io, true));
+                if (loadedSurf) {
+                  std::lock_guard lock(bgImageLoaderMutex);
+                  pendingBgImage = std::move(loadedSurf);
+                  lastLoadedUrl = imgUrl;
+                }
+              }
+            }
+          }
+        }
+      } catch (const std::exception &e) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Background image fetch failed: %s", e.what());
       }
-    } catch (const std::exception &e) {
-      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Background image fetch failed: %s", e.what());
+      std::mutex sleepMutex;
+      std::unique_lock lock(sleepMutex);
+      std::condition_variable_any().wait_for(lock, stopToken, std::chrono::hours(4),
+                                             [&stopToken] { return stopToken.stop_requested(); });
     }
   }
 
