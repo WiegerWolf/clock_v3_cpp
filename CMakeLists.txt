@@ -66,7 +66,7 @@ FetchContent_Declare(json
 FetchContent_MakeAvailable(json)
 
 add_executable(digital_clock_v3 main.cpp)
-
+target_compile_features(digital_clock_v3 PRIVATE cxx_std_20)
 target_link_libraries(digital_clock_v3
     PRIVATE
         cpr::cpr
