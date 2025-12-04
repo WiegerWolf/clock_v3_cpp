@@ -9,16 +9,19 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <chrono>
 #include <ctime>
 #include <format>
 #include <memory>
 #include <mutex>
-#include <optional>
-#include <sstream>
+#include <string>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #include "font_data.h"
 
+using namespace std::string_literals;
 using json = nlohmann::json;
 
 template <typename T, auto Deleter>
@@ -41,148 +44,216 @@ constexpr const char *AppVersion = "0.1.0";
 struct BingImage {
   std::string fullUrl;
   std::string date; // format "2025-11-22"
-  NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BingImage, fullUrl, date)
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BingImage, fullUrl, date)
+
+std::string getCurrentTime() {
+  auto now = std::chrono::system_clock::now();
+  return std::format("{:%OH:%M}", now);
+}
 
 namespace {
-SDL_Window *window;
-SDL_Renderer *renderer;
-TTF_Font *fontBig;
-TTF_Font *fontSmall;
-const int screen_width = 1024;
-const int screen_height = 600;
-} // anonymous namespace
+constexpr std::array<std::string_view, 7> weekdays = {"воскресенье", "понедельник", "вторник", "среда",
+                                                      "четверг",     "пятница",     "суббота"};
+constexpr std::array<std::string_view, 12> months = {"января", "февраля", "марта",    "апреля",  "мая",    "июня",
+                                                     "июля",   "августа", "сентября", "октября", "ноября", "декабря"};
+} // namespace
 
-struct AppState {
-  Uint64 lastPerformanceCounter;
-  SDL_Mutex *mutex;
+std::string getCurrentDate() {
+  auto now = std::chrono::system_clock::now();
+  auto days = std::chrono::floor<std::chrono::days>(now);
+  std::chrono::year_month_day ymd{days};
+  std::chrono::weekday wd{days};
+  return std::format("{}, {} {} {} года", weekdays[wd.c_encoding()], static_cast<unsigned>(ymd.day()),
+                     months[static_cast<unsigned>(ymd.month()) - 1], static_cast<int>(ymd.year()));
+}
 
-  SDL_Surface *bg_image;
-  SDL_Texture *bg_texture;
+class Clock {
+public:
+  Clock() = default;
+  Clock(const Clock &) = delete;
+  Clock &operator=(const Clock &) = delete;
 
-  string last_time_str;
-  SDL_Texture *time_texture;
-  SDL_FRect time_rect;
+  bool Init() {
+    SDL_SetAppMetadata(Config::AppName, Config::AppVersion, nullptr);
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+      SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL: %s", SDL_GetError());
+      return false;
+    }
 
-  string last_date_str;
-  SDL_Texture *date_texture;
-  SDL_FRect date_rect;
+    SDL_Window *w;
+    SDL_Renderer *r;
+    if (!SDL_CreateWindowAndRenderer(Config::AppName, Config::screen_width, Config::screen_height, SDL_WINDOW_RESIZABLE,
+                                     &w, &r)) {
+      SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create window/renderer: %s", SDL_GetError());
+      return false;
+    }
+    // Transfer ownership of the window and renderer to the unique_ptr
+    window.reset(w);
+    renderer.reset(r);
+
+    if (!TTF_Init()) {
+      SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL_ttf: %s", SDL_GetError());
+      return false;
+    }
+    SDL_IOStream *stream1 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
+    // Note: SDL_ttf takes ownership of IOStream if closeio is true.
+    fontSmall.reset(TTF_OpenFontIO(stream1, true, Config::font_small_size));
+    // We create a second stream for the second font to avoid ownership ambiguity.
+    SDL_IOStream *stream2 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
+    fontBig.reset(TTF_OpenFontIO(stream2, true, Config::font_big_size));
+    if (!fontSmall || !fontBig) {
+      SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't load embedded font: %s", SDL_GetError());
+      return false;
+    }
+
+    if (!SDL_SetRenderLogicalPresentation(renderer.get(), Config::screen_width, Config::screen_height,
+                                          SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't set logical presentation: %s", SDL_GetError());
+    }
+    if (!SDL_HideCursor()) {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
+    }
+
+    bgLoaderThread = std::jthread(&Clock::FetchBackgroundImage, this);
+    lastPerformanceCounter = SDL_GetPerformanceCounter();
+
+    return true;
+  }
+
+  SDL_AppResult Iterate() {
+    UpdateTiming();
+    UpdateTextures();
+    {
+      std::lock_guard lock(mutex);
+      if (pendingBgImage) {
+        bgTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), pendingBgImage.get()));
+        pendingBgImage.reset();
+      }
+    }
+    Render();
+    return SDL_APP_CONTINUE;
+  }
+
+private:
+  WindowPtr window;
+  RendererPtr renderer;
+  FontPtr fontBig;
+  FontPtr fontSmall;
+
+  std::jthread bgLoaderThread;
+  std::mutex mutex;
+  SurfacePtr pendingBgImage;
+  TexturePtr bgTexture;
+
+  Uint64 lastPerformanceCounter = 0;
+  double fps = 0.0;
+
+  std::string cachedTime;
+  TexturePtr timeTexture;
+  SDL_FRect timeRect{};
+  std::string cachedDate;
+  TexturePtr dateTexture;
+  SDL_FRect dateRect{};
+
+  void FetchBackgroundImage() {
+    try {
+      cpr::Response response = cpr::Get(cpr::Url{"https://peapix.com/bing/feed?country=us"});
+      auto response_json = json::parse(response.text);
+      const auto &images = response_json.get<std::vector<BingImage>>();
+      if (images.empty()) return;
+      // TODO: instead of grabbing the first image, grab the image with today's date
+      std::string imgUrl = images[0].fullUrl;
+      cpr::Response imgResp = cpr::Get(cpr::Url{imgUrl}, cpr::ReserveSize{2 * 1024 * 1024});
+      SDL_IOStream *io = SDL_IOFromConstMem(imgResp.text.data(), imgResp.text.size());
+      SurfacePtr loadedSurf(IMG_Load_IO(io, true));
+      if (loadedSurf) {
+        std::lock_guard lock(mutex);
+        pendingBgImage = std::move(loadedSurf);
+      }
+    } catch (const std::exception &e) {
+      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Background image fetch failed: %s", e.what());
+    }
+  }
+
+  void UpdateTiming() {
+    Uint64 now = SDL_GetPerformanceCounter();
+    Uint64 diff = now - lastPerformanceCounter;
+    lastPerformanceCounter = now;
+    fps = 1.0 / ((double)diff / (double)SDL_GetPerformanceFrequency());
+    SDL_Delay(16); // Wait for 16ms to maintain 60 FPS
+  }
+
+  void UpdateTextures() {
+    SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
+
+    std::string current_time = getCurrentTime();
+    if (current_time != cachedTime) {
+      cachedTime = current_time;
+      SurfacePtr surf(TTF_RenderText_Blended(fontBig.get(), cachedTime.c_str(), 0, white));
+      if (surf) {
+        timeTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), surf.get()));
+        timeRect = {(float)(Config::screen_width - surf->w) / 2.0f,
+                    (float)(Config::screen_height - surf->h) / 2.0f - 40.0f, (float)surf->w, (float)surf->h};
+      }
+    }
+    std::string current_date = getCurrentDate();
+    if (current_date != cachedDate) {
+      cachedDate = current_date;
+      SurfacePtr surf(TTF_RenderText_Blended(fontSmall.get(), cachedDate.c_str(), 0, white));
+      if (surf) {
+        dateTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), surf.get()));
+        dateRect = {(float)(Config::screen_width - surf->w) / 2.0f, 30.0f, (float)surf->w, (float)surf->h};
+      }
+    }
+  }
+
+  void Render() {
+    SDL_SetRenderDrawColor(renderer.get(), 0, 128, 128, SDL_ALPHA_OPAQUE);
+    SDL_RenderClear(renderer.get());
+
+    if (bgTexture) {
+      RenderTextureCover(bgTexture.get());
+    }
+    auto drawWithShadow = [&](SDL_Texture *tex, const SDL_FRect &rect) {
+      if (!tex) return;
+      SDL_SetTextureColorMod(tex, 0, 0, 0);
+      SDL_SetTextureAlphaMod(tex, 128);
+      SDL_FRect shadow = rect;
+      shadow.x += 1.0f;
+      shadow.y += 1.0f;
+      SDL_RenderTexture(renderer.get(), tex, nullptr, &shadow);
+      SDL_SetTextureColorMod(tex, 255, 255, 255);
+      SDL_SetTextureAlphaMod(tex, 255);
+      SDL_RenderTexture(renderer.get(), tex, nullptr, &rect);
+    };
+    drawWithShadow(dateTexture.get(), dateRect);
+    drawWithShadow(timeTexture.get(), timeRect);
+    SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
+    SDL_RenderDebugTextFormat(renderer.get(), 10, 10, "FPS: %.2f", fps);
+    SDL_RenderPresent(renderer.get());
+  }
+
+  // Helper to simulate "CSS object-fit: cover"
+  void RenderTextureCover(SDL_Texture *texture) {
+    float w, h;
+    SDL_GetTextureSize(texture, &w, &h);
+    float scale = std::max((float)Config::screen_width / w, (float)Config::screen_height / h);
+    float newW = w * scale;
+    float newH = h * scale;
+    SDL_FRect dst = {((float)Config::screen_width - newW) / 2.0f, ((float)Config::screen_height - newH) / 2.0f, newW,
+                     newH};
+    SDL_RenderTexture(renderer.get(), texture, nullptr, &dst);
+  }
 };
 
-string getCurrentTime() {
-  auto t = time(nullptr);
-  auto tm = *localtime(&t);
-  ostringstream oss;
-  oss << tm.tm_hour << ':';
-  if (tm.tm_min < 10) {
-    oss << '0';
-  }
-  oss << tm.tm_min;
-  return oss.str();
-}
-
-string getCurrentDate() {
-  auto t = time(nullptr);
-  auto tm = *localtime(&t);
-  vector<string> weekdays = {"воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"};
-  vector<string> months = {"января", "февраля", "марта",    "апреля",  "мая",    "июня",
-                           "июля",   "августа", "сентября", "октября", "ноября", "декабря"};
-  ostringstream oss;
-  oss << weekdays[tm.tm_wday] << ", " << tm.tm_mday << " " << months[tm.tm_mon] << " " << (1900 + tm.tm_year)
-      << " года";
-  return oss.str();
-}
-
-string getBgImageUrl() {
-  Response response = Get(Url{"https://peapix.com/bing/feed?country=us"});
-  json response_json = json::parse(response.text);
-  // TODO: instead of grabbing the first image, grab the image with today's date
-  auto first_image = response_json.get<vector<Image>>()[0];
-  return first_image.fullUrl;
-}
-
-SDL_Surface *get_bg_image() {
-  string bg_image_url = getBgImageUrl();
-  Response bg_image = Get(Url{bg_image_url}, ReserveSize{1024 * 1024}); // Increase reserve size to 1MB
-  SDL_IOStream *bg_image_data_stream = SDL_IOFromConstMem(bg_image.text.data(), bg_image.text.size());
-  SDL_Surface *bg_image_surface = IMG_Load_IO(bg_image_data_stream, true);
-  if (!bg_image_surface) {
-    SDL_Log("Couldn't load background image: %s", SDL_GetError());
-    return nullptr;
-  }
-  return bg_image_surface;
-}
-
-int bgImageLoaderThread(void *data) {
-  SDL_Surface *bg_image = get_bg_image();
-  if (!bg_image) {
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to load background image");
-    return -1;
-  }
-
-  auto *state = static_cast<AppState *>(data);
-  SDL_LockMutex(state->mutex);
-  state->bg_image = bg_image;
-  SDL_UnlockMutex(state->mutex);
-
-  return 0;
-}
-
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
-  SDL_SetAppMetadata("Digital Clock v3", "0.1.0", nullptr);
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
-    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL: %s", SDL_GetError());
+  auto *app = new Clock();
+  if (!app->Init()) {
+    delete app;
     return SDL_APP_FAILURE;
   }
-  if (!SDL_CreateWindowAndRenderer("Digital Clock v3", screen_width, screen_height, SDL_WINDOW_RESIZABLE, &window,
-                                   &renderer)) {
-    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create window/renderer: %s", SDL_GetError());
-    return SDL_APP_FAILURE;
-  }
-  if (!TTF_Init()) {
-    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL_ttf: %s", SDL_GetError());
-    return SDL_APP_FAILURE;
-  }
-  SDL_IOStream *font_stream = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
-  fontSmall = TTF_OpenFontIO(font_stream, true, 48);
-  if (!fontSmall) {
-    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't open embedded font: %s", SDL_GetError());
-    return SDL_APP_FAILURE;
-  }
-  // passing closeio false here, cause we're reusing font_stream from fontSmall
-  // and we don't want to double free the stream when we TTF_CloseFont(fontBig);
-  fontBig = TTF_OpenFontIO(font_stream, false, 382);
-  if (!fontBig) {
-    SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't open embedded font: %s", SDL_GetError());
-    return SDL_APP_FAILURE;
-  }
-  if (!SDL_SetRenderLogicalPresentation(renderer, screen_width, screen_height, SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
-    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't set logical presentation: %s", SDL_GetError());
-  }
-  if (!SDL_HideCursor()) {
-    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
-  }
-
-  auto *state = new AppState();
-  state->lastPerformanceCounter = SDL_GetPerformanceCounter();
-  state->mutex = SDL_CreateMutex();
-  state->bg_image = nullptr;
-  state->bg_texture = nullptr;
-  state->time_texture = nullptr;
-  state->last_time_str = "";
-  state->date_texture = nullptr;
-  state->last_date_str = "";
-
-  *appstate = state;
-
-  // TODO: kick this off every 24 hours
-  SDL_Thread *bg_image_loader_thread = SDL_CreateThread(bgImageLoaderThread, "bgImageLoaderThread", state);
-  if (!bg_image_loader_thread) {
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create background image loader thread: %s", SDL_GetError());
-  } else {
-    SDL_DetachThread(bg_image_loader_thread);
-  }
-
+  *appstate = app;
   return SDL_APP_CONTINUE;
 }
 
@@ -194,140 +265,12 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
-  auto *state = static_cast<AppState *>(appstate);
-
-  double target_fps = 60.0;
-  double target_frame_time = 1.0 / target_fps;
-
-  Uint64 now = SDL_GetPerformanceCounter();
-  Uint64 diff = now - state->lastPerformanceCounter;
-  state->lastPerformanceCounter = now;
-
-  double frameTimeS = (double)diff / (double)SDL_GetPerformanceFrequency();
-  double fps = 1.0 / frameTimeS;
-  SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
-
-  string current_time_str = getCurrentTime();
-  if (current_time_str != state->last_time_str) {
-    SDL_Surface *timeSurface = TTF_RenderText_Blended(fontBig, current_time_str.c_str(), 0, white);
-    if (timeSurface) {
-      if (state->time_texture) {
-        SDL_DestroyTexture(state->time_texture);
-      }
-      state->time_texture = SDL_CreateTextureFromSurface(renderer, timeSurface);
-      if (!state->time_texture) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Failed to create texture from surface: %s", SDL_GetError());
-      } else {
-        state->time_rect.w = (float)timeSurface->w;
-        state->time_rect.h = (float)timeSurface->h;
-        state->time_rect.x = ((float)screen_width - state->time_rect.w) / 2.0f;
-        state->time_rect.y = ((float)screen_height - state->time_rect.h) / 2.0f - 40.0f;
-      }
-      SDL_DestroySurface(timeSurface);
-      state->last_time_str = current_time_str;
-    }
-  }
-  string current_date_str = getCurrentDate();
-  if (current_date_str != state->last_date_str) {
-    SDL_Surface *dateSurface = TTF_RenderText_Blended(fontSmall, current_date_str.c_str(), 0, white);
-    if (dateSurface) {
-      if (state->date_texture) {
-        SDL_DestroyTexture(state->date_texture);
-      }
-      state->date_texture = SDL_CreateTextureFromSurface(renderer, dateSurface);
-      if (!state->date_texture) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Failed to create texture from surface: %s", SDL_GetError());
-      } else {
-        state->date_rect.w = (float)dateSurface->w;
-        state->date_rect.h = (float)dateSurface->h;
-        state->date_rect.x = ((float)screen_width - state->date_rect.w) / 2.0f;
-        state->date_rect.y = 30.0f;
-      }
-      SDL_DestroySurface(dateSurface);
-      state->last_date_str = current_date_str;
-    }
-  }
-
-  SDL_LockMutex(state->mutex);
-  if (state->bg_image) {
-    SDL_Texture *bg_texture = SDL_CreateTextureFromSurface(renderer, state->bg_image);
-    if (!bg_texture) {
-      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Failed to create texture from surface: %s", SDL_GetError());
-    } else {
-      if (state->bg_texture) {
-        SDL_DestroyTexture(state->bg_texture); // so we don't leak VRAM
-      }
-      state->bg_texture = bg_texture;
-    }
-    SDL_DestroySurface(state->bg_image);
-    state->bg_image = nullptr;
-  }
-  SDL_UnlockMutex(state->mutex);
-
-  SDL_SetRenderDrawColor(renderer, 0, 128, 128, SDL_ALPHA_OPAQUE);
-  SDL_RenderClear(renderer);
-
-  if (state->bg_texture) {
-    // TODO: instead of drawing the texture stretched, set up cover scaling
-    SDL_RenderTexture(renderer, state->bg_texture, nullptr, nullptr);
-  }
-
-  if (state->date_texture) {
-    SDL_SetTextureColorMod(state->date_texture, 0, 0, 0);
-    SDL_SetTextureAlphaMod(state->date_texture, 128);
-    SDL_FRect shadowRect = state->date_rect;
-    shadowRect.x += 1;
-    shadowRect.y += 1;
-    SDL_RenderTexture(renderer, state->date_texture, nullptr, &shadowRect);
-    SDL_SetTextureColorMod(state->date_texture, 255, 255, 255);
-    SDL_SetTextureAlphaMod(state->date_texture, 255);
-    SDL_RenderTexture(renderer, state->date_texture, nullptr, &state->date_rect);
-  }
-
-  if (state->time_texture) {
-    SDL_SetTextureColorMod(state->time_texture, 0, 0, 0);
-    SDL_SetTextureAlphaMod(state->time_texture, 128);
-    SDL_FRect shadowRect = state->time_rect;
-    shadowRect.x += 1;
-    shadowRect.y += 1;
-    SDL_RenderTexture(renderer, state->time_texture, nullptr, &shadowRect);
-    SDL_SetTextureColorMod(state->time_texture, 255, 255, 255);
-    SDL_SetTextureAlphaMod(state->time_texture, 255);
-    SDL_RenderTexture(renderer, state->time_texture, nullptr, &state->time_rect);
-  }
-
-  SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
-  SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
-
-  SDL_RenderPresent(renderer);
-
-  SDL_Delay(target_frame_time * 1000);
-  return SDL_APP_CONTINUE;
+  auto *app = static_cast<Clock *>(appstate);
+  return app->Iterate();
 }
 
 void SDL_AppQuit(void *appstate, SDL_AppResult result) {
-  auto *state = static_cast<AppState *>(appstate);
-  if (state->bg_texture) {
-    SDL_DestroyTexture(state->bg_texture);
-  }
-  if (state->time_texture) {
-    SDL_DestroyTexture(state->time_texture);
-  }
-  if (state->date_texture) {
-    SDL_DestroyTexture(state->date_texture);
-  }
-
-  // Note: We deliberately leak the mutex and surface wrapper to avoid
-  // crashing the worker thread. We let the OS clean up the memory when the
-  // process exits.
-
-  if (fontSmall) {
-    TTF_CloseFont(fontSmall);
-    fontSmall = nullptr;
-  }
-  if (fontBig) {
-    TTF_CloseFont(fontBig);
-    fontBig = nullptr;
-  }
+  auto *app = static_cast<Clock *>(appstate);
+  delete app;
   TTF_Quit();
 }
