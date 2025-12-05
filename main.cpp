@@ -80,61 +80,67 @@ public:
     float x, y;
     float size;
     float speedY;
-    float wobblePhase; // Current angle for sine wave
-    float wobbleSpeed; // How fast it sways
-    float depth;       // 0.0 (far) to 1.0 (near)
+    float wobblePhase; 
+    float wobbleSpeed; 
+    float depth;       
   };
 
-  void Init(int width, int height, int count = 250) {
+  void Init(int width, int height, int count = 300) {
     screenWidth = width;
     screenHeight = height;
     flakes.resize(count);
-
+    
     std::mt19937 gen(std::random_device{}());
-
+    
     for (auto &f : flakes) {
-      ResetFlake(f, gen, true); // true = random Y position initially
+      ResetFlake(f, gen, true);
     }
   }
 
   void Update(double dt) {
-    // Global wind drift (pixels per second)
-    const float windSpeed = 15.0f;
+    // Accumulate time to drive the wind sine waves
+    windTimer += dt;
+
+    // Calculate Dynamic Wind
+    // 1. Primary drift: Slow oscillation (period ~12 seconds), ranges -20 to +20
+    float slowWind = 20.0f * std::sin(windTimer * 0.5f);
+    
+    // 2. Gusts: Faster oscillation (period ~2 seconds), adds turbulence
+    float gustWind = 10.0f * std::sin(windTimer * 2.5f);
+
+    // 3. Combine: Add a slight constant right bias (+5) so it doesn't just feel like it's vibrating in place
+    float currentWind = slowWind + gustWind + 5.0f;
 
     for (auto &f : flakes) {
       // Move down
       f.y += f.speedY * dt;
 
-      // Update wobble (swaying effect)
+      // Update individual wobble (swaying effect)
       f.wobblePhase += f.wobbleSpeed * dt;
+      float individualSway = std::sin(f.wobblePhase) * (10.0f * (1.0f - f.depth));
 
-      // Calculate horizontal movement: Wind + Sine wave sway
-      // The sine wave magnitude depends on size (smaller flakes sway more easily)
-      float sway = std::sin(f.wobblePhase) * (10.0f * (1.0f - f.depth));
-      f.x += (windSpeed * f.depth + sway) * dt;
+      // Apply Wind + Individual Sway
+      // Multiply wind by depth so background flakes move less than foreground ones (parallax)
+      f.x += (currentWind * f.depth + individualSway) * dt;
 
-      // Boundary checks
-      // If went off right side, wrap to left
+      // Wrap Around Logic (Horizontal)
       if (f.x > screenWidth) f.x = -f.size;
-      // If went off left side, wrap to right
-      else if (f.x < -f.size)
-        f.x = (float)screenWidth;
+      else if (f.x < -f.size) f.x = (float)screenWidth;
 
-      // If went off bottom, reset to top
+      // Reset Logic (Vertical)
       if (f.y > screenHeight) {
-        std::mt19937 gen(std::random_device{}()); // Re-creating generator is cheap enough for reset
+        std::mt19937 gen(std::random_device{}());
         ResetFlake(f, gen, false);
       }
     }
   }
 
   void Draw(SDL_Renderer *renderer) {
-    // Enable blending for transparency
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     for (const auto &f : flakes) {
-      // Alpha based on depth (farther = more transparent)
-      Uint8 alpha = static_cast<Uint8>(50 + (f.depth * 205));
+      // Alpha based on depth
+      Uint8 alpha = static_cast<Uint8>(50 + (f.depth * 205)); 
       SDL_SetRenderDrawColor(renderer, 255, 255, 255, alpha);
 
       SDL_FRect rect{f.x, f.y, f.size, f.size};
@@ -145,26 +151,26 @@ public:
 private:
   int screenWidth = 0;
   int screenHeight = 0;
+  double windTimer = 0.0; // Keeps track of global time for wind physics
   std::vector<Flake> flakes;
 
   void ResetFlake(Flake &f, std::mt19937 &gen, bool randomizeY) {
     std::uniform_real_distribution<float> distX(0.0f, (float)screenWidth);
     std::uniform_real_distribution<float> distY(-50.0f, (float)screenHeight);
-    std::uniform_real_distribution<float> distDepth(0.2f, 1.0f); // 0.2 is far, 1.0 is near
+    std::uniform_real_distribution<float> distDepth(0.2f, 1.0f);
     std::uniform_real_distribution<float> distPhase(0.0f, 6.28f);
 
     f.depth = distDepth(gen);
-    f.size = 2.0f + (f.depth * 3.0f); // Size between 2 and 5 pixels
-
-    // Speed depends on depth (closer looks faster)
-    f.speedY = 30.0f + (f.depth * 60.0f);
-
+    f.size = 2.0f + (f.depth * 3.0f); 
+    
+    // Fall speed
+    f.speedY = 30.0f + (f.depth * 60.0f); 
+    
     f.wobblePhase = distPhase(gen);
     f.wobbleSpeed = 1.0f + (f.depth * 2.0f);
 
     f.x = distX(gen);
-    // If we are just starting, randomize Y on screen. If resetting, put at top.
-    f.y = randomizeY ? distY(gen) : -f.size;
+    f.y = randomizeY ? distY(gen) : -f.size; 
   }
 };
 
