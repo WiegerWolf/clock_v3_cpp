@@ -8,6 +8,7 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -80,97 +81,133 @@ public:
     float x, y;
     float size;
     float speedY;
-    float wobblePhase; 
-    float wobbleSpeed; 
-    float depth;       
+    int wobbleIndex; // Lookup table index (0-1023)
+    int wobbleStep;
+    float depth;
   };
 
-  void Init(int width, int height, int count = 300) {
+  SnowSystem() : gen(std::random_device{}()) {
+    sineLUT.resize(1024);
+    for (int i = 0; i < 1024; ++i) {
+      float phase = (float)i / 1024.0f * 2.0f * 3.14159f;
+      sineLUT[i] = std::sin(phase);
+    }
+  }
+
+  void Init(int width, int height, int count = 200) {
     screenWidth = width;
     screenHeight = height;
+
     flakes.resize(count);
-    
-    std::mt19937 gen(std::random_device{}());
-    
+    vertices.resize(count * 4);
+    indices.resize(count * 6);
+
+    // Pre-fill indices (Standard Quad Pattern: 0,1,2, 2,3,0)
+    for (int i = 0; i < count; ++i) {
+      int v = i * 4;
+      int idx = i * 6;
+      indices[idx + 0] = v + 0;
+      indices[idx + 1] = v + 1;
+      indices[idx + 2] = v + 2;
+      indices[idx + 3] = v + 2;
+      indices[idx + 4] = v + 3;
+      indices[idx + 5] = v + 0;
+    }
+
     for (auto &f : flakes) {
-      ResetFlake(f, gen, true);
+      ResetFlake(f, true);
     }
   }
 
   void Update(double dt) {
-    // Accumulate time to drive the wind sine waves
     windTimer += dt;
 
-    // Calculate Dynamic Wind
-    // 1. Primary drift: Slow oscillation (period ~12 seconds), ranges -20 to +20
-    float slowWind = 20.0f * std::sin(windTimer * 0.5f);
-    
-    // 2. Gusts: Faster oscillation (period ~2 seconds), adds turbulence
-    float gustWind = 10.0f * std::sin(windTimer * 2.5f);
-
-    // 3. Combine: Add a slight constant right bias (+5) so it doesn't just feel like it's vibrating in place
+    // Lookup table access for wind
+    float slowWind = 20.0f * GetFastSin(windTimer * 0.5f);
+    float gustWind = 10.0f * GetFastSin(windTimer * 2.5f);
     float currentWind = slowWind + gustWind + 5.0f;
 
+    const int lutMask = 1023;
+    int vIndex = 0;
+
     for (auto &f : flakes) {
-      // Move down
-      f.y += f.speedY * dt;
+      // Physics Update
+      f.y += f.speedY * (float)dt;
 
-      // Update individual wobble (swaying effect)
-      f.wobblePhase += f.wobbleSpeed * dt;
-      float individualSway = std::sin(f.wobblePhase) * (10.0f * (1.0f - f.depth));
+      // Wobble (Integer math + Look up table)
+      f.wobbleIndex = (f.wobbleIndex + f.wobbleStep) & lutMask;
+      float individualSway = sineLUT[f.wobbleIndex] * (10.0f * (1.0f - f.depth));
 
-      // Apply Wind + Individual Sway
-      // Multiply wind by depth so background flakes move less than foreground ones (parallax)
-      f.x += (currentWind * f.depth + individualSway) * dt;
+      f.x += (currentWind * f.depth + individualSway) * (float)dt;
 
-      // Wrap Around Logic (Horizontal)
-      if (f.x > screenWidth) f.x = -f.size;
-      else if (f.x < -f.size) f.x = (float)screenWidth;
+      // Wrap/Reset Logic
+      if (f.x > screenWidth)
+        f.x = -f.size;
+      else if (f.x < -f.size)
+        f.x = (float)screenWidth;
 
-      // Reset Logic (Vertical)
       if (f.y > screenHeight) {
-        std::mt19937 gen(std::random_device{}());
-        ResetFlake(f, gen, false);
+        ResetFlake(f, false);
       }
+
+      float alphaVal = 0.2f + (f.depth * 0.8f);
+      SDL_FColor col = {1.0f, 1.0f, 1.0f, alphaVal};
+
+      // Top-Left
+      vertices[vIndex + 0].position = {f.x, f.y};
+      vertices[vIndex + 0].color = col;
+      // Top-Right
+      vertices[vIndex + 1].position = {f.x + f.size, f.y};
+      vertices[vIndex + 1].color = col;
+      // Bottom-Right
+      vertices[vIndex + 2].position = {f.x + f.size, f.y + f.size};
+      vertices[vIndex + 2].color = col;
+      // Bottom-Left
+      vertices[vIndex + 3].position = {f.x, f.y + f.size};
+      vertices[vIndex + 3].color = col;
+
+      vIndex += 4;
     }
   }
 
   void Draw(SDL_Renderer *renderer) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
-    for (const auto &f : flakes) {
-      // Alpha based on depth
-      Uint8 alpha = static_cast<Uint8>(50 + (f.depth * 205)); 
-      SDL_SetRenderDrawColor(renderer, 255, 255, 255, alpha);
-
-      SDL_FRect rect{f.x, f.y, f.size, f.size};
-      SDL_RenderFillRect(renderer, &rect);
-    }
+    SDL_RenderGeometry(renderer,
+                       nullptr, // No texture (white rectangles)
+                       vertices.data(), (int)vertices.size(), indices.data(), (int)indices.size());
   }
 
 private:
   int screenWidth = 0;
   int screenHeight = 0;
-  double windTimer = 0.0; // Keeps track of global time for wind physics
-  std::vector<Flake> flakes;
+  double windTimer = 0.0;
 
-  void ResetFlake(Flake &f, std::mt19937 &gen, bool randomizeY) {
+  std::vector<Flake> flakes;
+  std::vector<float> sineLUT;
+
+  std::vector<SDL_Vertex> vertices;
+  std::vector<int> indices;
+
+  std::mt19937 gen;
+  std::uniform_real_distribution<float> distDepth{0.2f, 1.0f};
+  std::uniform_int_distribution<int> distPhase{0, 1023};
+
+  float GetFastSin(double val) {
+    int idx = static_cast<int>(val * (1024.0 / (2.0 * 3.14159))) & 1023;
+    return sineLUT[idx];
+  }
+
+  void ResetFlake(Flake &f, bool randomizeY) {
     std::uniform_real_distribution<float> distX(0.0f, (float)screenWidth);
     std::uniform_real_distribution<float> distY(-50.0f, (float)screenHeight);
-    std::uniform_real_distribution<float> distDepth(0.2f, 1.0f);
-    std::uniform_real_distribution<float> distPhase(0.0f, 6.28f);
 
     f.depth = distDepth(gen);
-    f.size = 2.0f + (f.depth * 3.0f); 
-    
-    // Fall speed
-    f.speedY = 30.0f + (f.depth * 60.0f); 
-    
-    f.wobblePhase = distPhase(gen);
-    f.wobbleSpeed = 1.0f + (f.depth * 2.0f);
-
+    f.size = 2.0f + (f.depth * 3.0f);
+    f.speedY = 30.0f + (f.depth * 60.0f);
+    f.wobbleIndex = distPhase(gen);
+    f.wobbleStep = 1 + static_cast<int>(f.depth * 3);
     f.x = distX(gen);
-    f.y = randomizeY ? distY(gen) : -f.size; 
+    f.y = randomizeY ? distY(gen) : -f.size;
   }
 };
 
