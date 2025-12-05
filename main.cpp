@@ -10,12 +10,14 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <ctime>
 #include <format>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -39,6 +41,7 @@ constexpr int screen_width = 1024;
 constexpr int screen_height = 600;
 constexpr int font_big_size = 382;
 constexpr int font_small_size = 48;
+constexpr int num_snowflakes = 666;
 constexpr const char *AppName = "Digital Clock v3";
 constexpr const char *AppVersion = "0.1.0";
 } // namespace Config
@@ -70,6 +73,100 @@ std::string getCurrentDate() {
   return std::format("{}, {} {} {} года", weekdays[wd.c_encoding()], static_cast<unsigned>(ymd.day()),
                      months[static_cast<unsigned>(ymd.month()) - 1], static_cast<int>(ymd.year()));
 }
+
+class SnowSystem {
+public:
+  struct Flake {
+    float x, y;
+    float size;
+    float speedY;
+    float wobblePhase; // Current angle for sine wave
+    float wobbleSpeed; // How fast it sways
+    float depth;       // 0.0 (far) to 1.0 (near)
+  };
+
+  void Init(int width, int height, int count = 250) {
+    screenWidth = width;
+    screenHeight = height;
+    flakes.resize(count);
+
+    std::mt19937 gen(std::random_device{}());
+
+    for (auto &f : flakes) {
+      ResetFlake(f, gen, true); // true = random Y position initially
+    }
+  }
+
+  void Update(double dt) {
+    // Global wind drift (pixels per second)
+    const float windSpeed = 15.0f;
+
+    for (auto &f : flakes) {
+      // Move down
+      f.y += f.speedY * dt;
+
+      // Update wobble (swaying effect)
+      f.wobblePhase += f.wobbleSpeed * dt;
+
+      // Calculate horizontal movement: Wind + Sine wave sway
+      // The sine wave magnitude depends on size (smaller flakes sway more easily)
+      float sway = std::sin(f.wobblePhase) * (10.0f * (1.0f - f.depth));
+      f.x += (windSpeed * f.depth + sway) * dt;
+
+      // Boundary checks
+      // If went off right side, wrap to left
+      if (f.x > screenWidth) f.x = -f.size;
+      // If went off left side, wrap to right
+      else if (f.x < -f.size)
+        f.x = (float)screenWidth;
+
+      // If went off bottom, reset to top
+      if (f.y > screenHeight) {
+        std::mt19937 gen(std::random_device{}()); // Re-creating generator is cheap enough for reset
+        ResetFlake(f, gen, false);
+      }
+    }
+  }
+
+  void Draw(SDL_Renderer *renderer) {
+    // Enable blending for transparency
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    for (const auto &f : flakes) {
+      // Alpha based on depth (farther = more transparent)
+      Uint8 alpha = static_cast<Uint8>(50 + (f.depth * 205));
+      SDL_SetRenderDrawColor(renderer, 255, 255, 255, alpha);
+
+      SDL_FRect rect{f.x, f.y, f.size, f.size};
+      SDL_RenderFillRect(renderer, &rect);
+    }
+  }
+
+private:
+  int screenWidth = 0;
+  int screenHeight = 0;
+  std::vector<Flake> flakes;
+
+  void ResetFlake(Flake &f, std::mt19937 &gen, bool randomizeY) {
+    std::uniform_real_distribution<float> distX(0.0f, (float)screenWidth);
+    std::uniform_real_distribution<float> distY(-50.0f, (float)screenHeight);
+    std::uniform_real_distribution<float> distDepth(0.2f, 1.0f); // 0.2 is far, 1.0 is near
+    std::uniform_real_distribution<float> distPhase(0.0f, 6.28f);
+
+    f.depth = distDepth(gen);
+    f.size = 2.0f + (f.depth * 3.0f); // Size between 2 and 5 pixels
+
+    // Speed depends on depth (closer looks faster)
+    f.speedY = 30.0f + (f.depth * 60.0f);
+
+    f.wobblePhase = distPhase(gen);
+    f.wobbleSpeed = 1.0f + (f.depth * 2.0f);
+
+    f.x = distX(gen);
+    // If we are just starting, randomize Y on screen. If resetting, put at top.
+    f.y = randomizeY ? distY(gen) : -f.size;
+  }
+};
 
 class Clock {
 public:
@@ -118,6 +215,7 @@ public:
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
     }
 
+    snow.Init(Config::screen_width, Config::screen_height, Config::num_snowflakes);
     bgLoaderThread = std::jthread(&Clock::FetchBackgroundImage, this);
     lastPerformanceCounter = SDL_GetPerformanceCounter();
 
@@ -126,6 +224,7 @@ public:
 
   SDL_AppResult Iterate() {
     UpdateTiming();
+    snow.Update(deltaTime);
     UpdateTextures();
     {
       std::lock_guard lock(bgImageLoaderMutex);
@@ -144,6 +243,8 @@ private:
   FontPtr fontBig;
   FontPtr fontSmall;
 
+  SnowSystem snow;
+
   std::jthread bgLoaderThread;
   std::mutex bgImageLoaderMutex;
   std::string lastLoadedUrl;
@@ -152,6 +253,7 @@ private:
 
   Uint64 lastPerformanceCounter = 0;
   double fps = 0.0;
+  double deltaTime = 0.0;
 
   struct TextLabel {
     std::string text;
@@ -228,7 +330,9 @@ private:
     Uint64 now = SDL_GetPerformanceCounter();
     Uint64 diff = now - lastPerformanceCounter;
     lastPerformanceCounter = now;
-    fps = 1.0 / ((double)diff / (double)SDL_GetPerformanceFrequency());
+    deltaTime = (double)diff / (double)SDL_GetPerformanceFrequency();
+    fps = 1.0 / deltaTime;
+
     SDL_Delay(16); // Wait for 16ms to maintain 60 FPS
   }
 
@@ -247,9 +351,10 @@ private:
     SDL_RenderClear(renderer.get());
 
     if (bgTexture) {
-      SDL_SetTextureColorMod(bgTexture.get(), 100, 100, 100);
+      SDL_SetTextureColorMod(bgTexture.get(), 150, 150, 150);
       RenderTextureCover(bgTexture.get());
     }
+    snow.Draw(renderer.get());
     dateLabel.draw(renderer.get());
     timeLabel.draw(renderer.get());
 
