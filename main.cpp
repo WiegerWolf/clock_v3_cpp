@@ -50,8 +50,9 @@ struct BingImage {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BingImage, fullUrl, date)
 
 std::string getCurrentTime() {
-  auto now = std::chrono::system_clock::now();
-  return std::format("{:%OH:%M}", now);
+  auto t = std::time(nullptr);
+  auto tm = *std::localtime(&t);
+  return std::format("{}:{:02}", tm.tm_hour, tm.tm_min);
 }
 
 namespace {
@@ -246,7 +247,8 @@ private:
     SDL_RenderClear(renderer.get());
 
     if (bgTexture) {
-      SDL_RenderClear(renderer.get());
+      SDL_SetTextureColorMod(bgTexture.get(), 100, 100, 100);
+      RenderTextureCover(bgTexture.get());
     }
     dateLabel.draw(renderer.get());
     timeLabel.draw(renderer.get());
