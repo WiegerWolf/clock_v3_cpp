@@ -28,6 +28,8 @@ would return JSON, that looks like:
 ]
 ```
 
+There's a mock server for this API in `./bing-feed-local-mock-server`. Use it for development.
+
 # clangd LSP Integration
 
 To get your editor pick up on dependencies headers, compile your project once in debug mode.
