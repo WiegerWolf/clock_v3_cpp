@@ -69,38 +69,35 @@ struct WeatherData {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WeatherData, current_weather)
 
-// --- Weather Helpers ---
 namespace {
-const std::map<int, std::string_view> WEATHER_CODE_RU = {{0, "Ясно"},
-                                                         {1, "Редкие облака"},
-                                                         {2, "Переменная облачность"},
-                                                         {3, "Облачно"},
-                                                         {45, "Туман"},
-                                                         {48, "Изморозь"},
-                                                         {51, "Легкая морось"},
-                                                         {53, "Моросит"},
-                                                         {55, "Плотно моросит"},
-                                                         {56, "Ледяная морось"},
-                                                         {57, "Тяжелая ледяная морось"},
-                                                         {61, "Легкий дождик"},
-                                                         {63, "Дождь"},
-                                                         {65, "Ливень"},
-                                                         {66, "Холодный дождь"},
-                                                         {67, "Ледяной ливень"},
-                                                         {71, "Снежок"},
-                                                         {73, "Снегопад"},
-                                                         {75, "Сильный снегопад"},
-                                                         {77, "Снежный град"},
-                                                         {80, "Ливневый дождик"},
-                                                         {81, "Ливни"},
-                                                         {82, "Плотные ливни"},
-                                                         {85, "Снежный дождик"},
-                                                         {86, "Снежные дожди"},
-                                                         {95, "Небольшая гроза"},
-                                                         {96, "Гроза с маленьким градом"},
-                                                         {99, "Град с грозой"}};
-
-// TODO: unused in display string, but kept as requested
+const std::map<int, std::string_view> WEATHER_CODE_RU = {{0, "ясно"},
+                                                         {1, "редкие облака"},
+                                                         {2, "переменная облачность"},
+                                                         {3, "облачно"},
+                                                         {45, "туман"},
+                                                         {48, "изморозь"},
+                                                         {51, "легкая морось"},
+                                                         {53, "моросит"},
+                                                         {55, "плотно моросит"},
+                                                         {56, "ледяная морось"},
+                                                         {57, "тяжелая ледяная морось"},
+                                                         {61, "легкий дождик"},
+                                                         {63, "дождь"},
+                                                         {65, "ливень"},
+                                                         {66, "холодный дождь"},
+                                                         {67, "ледяной ливень"},
+                                                         {71, "снежок"},
+                                                         {73, "снегопад"},
+                                                         {75, "сильный снегопад"},
+                                                         {77, "снежный град"},
+                                                         {80, "ливневый дождик"},
+                                                         {81, "ливни"},
+                                                         {82, "плотные ливни"},
+                                                         {85, "снежный дождик"},
+                                                         {86, "снежные дожди"},
+                                                         {95, "небольшая гроза"},
+                                                         {96, "гроза с маленьким градом"},
+                                                         {99, "град с грозой"}};
 std::string_view getWindspeedType(double windspeed) {
   if (windspeed < 1)
     return "штиль";
@@ -419,21 +416,29 @@ private:
   void FetchWeather(std::stop_token stopToken) {
     while (!stopToken.stop_requested()) {
       try {
-        cpr::Response response =
-            cpr::Get(cpr::Url{"https://api.open-meteo.com/v1/"
-                              "forecast?latitude=52.3738&longitude=4.8910&hourly=apparent_temperature,precipitation&"
-                              "current_weather=true&windspeed_unit=ms&timezone=auto"});
+        cpr::Response response = cpr::Get(cpr::Url{"https://api.open-meteo.com/v1/forecast"
+                                                   "?latitude=52.3738"
+                                                   "&longitude=4.8910"
+                                                   "&current_weather=true"
+                                                   "&windspeed_unit=ms"
+                                                   "&timezone=auto"});
         if (response.status_code == 200) {
           auto json_data = json::parse(response.text);
           WeatherData wd = json_data.template get<WeatherData>();
-
-          std::string_view description = "Неизвестно";
+          std::string description = "Неизвестно";
           if (auto it = WEATHER_CODE_RU.find(wd.current_weather.weathercode); it != WEATHER_CODE_RU.end()) {
-            description = it->second;
+            description = std::string(it->second);
           }
-          // Format: 4°C, <weachercode_to_description>, <windspeed>м/с
-          std::string result = std::format("{:.0f}°C, {}, {:.1f}м/с", wd.current_weather.temperature, description,
-                                           wd.current_weather.windspeed);
+          double ws = wd.current_weather.windspeed;
+          description += ", ";
+          description += getWindspeedType(ws);
+          if (ws >= 1.0) {
+            long roundedWind = std::lround(ws);
+            description += " ";
+            description += std::to_string(roundedWind);
+            description += " м/с";
+          }
+          std::string result = std::format("{:.0f}°C, {}", wd.current_weather.temperature, description);
           {
             std::lock_guard lock(weatherMutex);
             weatherString = result;
@@ -445,7 +450,7 @@ private:
       std::mutex sleepMutex;
       std::unique_lock lock(sleepMutex);
       std::condition_variable_any().wait_for(lock, stopToken,
-                                             std::chrono::minutes(15), // Fetch weather every 15 minutes
+                                             std::chrono::minutes(5), // Fetch weather every 5 minutes
                                              [&stopToken] { return stopToken.stop_requested(); });
     }
   }
@@ -490,7 +495,7 @@ private:
     SDL_RenderClear(renderer.get());
 
     if (bgTexture) {
-      SDL_SetTextureColorMod(bgTexture.get(), 150, 150, 150);
+      SDL_SetTextureColorMod(bgTexture.get(), 200, 200, 200);
       RenderTextureCover(bgTexture.get());
     }
     snow.Draw(renderer.get());

@@ -32,7 +32,7 @@ There's a mock server for this API in `./bing-feed-local-mock-server`. Use it fo
 
 # Weather API
 
-https://api.open-meteo.com/v1/forecast?latitude=52.3738&longitude=4.8910&hourly=apparent_temperature,precipitation&current_weather=true&windspeed_unit=ms&timezone=auto
+https://api.open-meteo.com/v1/forecast?latitude=52.3738&longitude=4.8910&current_weather=true&windspeed_unit=ms&timezone=auto
 
 would return JSON, that looks like:
 
@@ -62,28 +62,6 @@ would return JSON, that looks like:
     "winddirection": 159,
     "is_day": 0,
     "weathercode": 53
-  },
-  "hourly_units": {
-    "time": "iso8601",
-    "apparent_temperature": "°C",
-    "precipitation": "mm"
-  },
-  "hourly": {
-    "time": [
-      "2025-12-06T00:00",
-      ...
-      "2025-12-12T23:00"
-    ],
-    "apparent_temperature": [
-      -0.5,
-      ...
-      6.5
-    ],
-    "precipitation": [
-      0.00,
-      ...
-      0.00
-    ]
   }
 }
 ```
