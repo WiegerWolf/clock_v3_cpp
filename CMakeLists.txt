@@ -95,4 +95,8 @@ target_link_libraries(digital_clock_v3
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
     target_link_libraries(digital_clock_v3 PRIVATE atomic)
 endif()
-target_link_options(digital_clock_v3 PRIVATE -static-libgcc -static-libstdc++)
+target_link_options(digital_clock_v3 PRIVATE 
+    -static-libgcc 
+    -static-libstdc++
+    $<$<CONFIG:Release>:-s>  # Only adds -strip flag for Release builds
+)
