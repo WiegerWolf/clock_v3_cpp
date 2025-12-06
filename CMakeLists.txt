@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
+
+# Ensure all dependencies (SDL_image, CPR, etc.) build as static libraries
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 include(FetchContent)
 
 project(digital_clock_v3)
@@ -6,8 +10,10 @@ project(digital_clock_v3)
 FetchContent_Declare(SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG release-3.2.26)
+# Force Static build for SDL3
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
+# Turn off unnecessary SDL3 subsystems
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
@@ -41,15 +47,23 @@ else()
     set(SDL_AVX ON CACHE BOOL "" FORCE)
 endif()
 FetchContent_MakeAvailable(SDL3)
+# Point subsequent find_package(SDL3) calls to the internal build directory
+# FetchContent defines <lowercase_name>_BINARY_DIR
+set(SDL3_DIR "${sdl3_BINARY_DIR}")
 
 FetchContent_Declare(SDL3_Image
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_image.git
     GIT_TAG release-3.2.4)
+# Options to make cross-compiling Image easier (use built-in codecs)
+set(SDL3IMAGE_BACKEND_STB ON CACHE BOOL "" FORCE) 
+set(SDL3IMAGE_BACKEND_IMAGEIO OFF CACHE BOOL "" FORCE)
+set(SDL3IMAGE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(SDL3_Image)
 
 FetchContent_Declare(SDL3_TTF
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
     GIT_TAG release-3.2.2)
+set(SDL3TTF_SAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(SDL3_TTF)
 
 FetchContent_Declare(cpr
@@ -75,4 +89,9 @@ target_link_libraries(digital_clock_v3
         SDL3_image::SDL3_image
         SDL3_ttf::SDL3_ttf
 )
+# Since we are cross-compiling static, we sometimes need to explicitly link atomic 
+# if the dep libraries don't propagate it correctly on ARM.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
+    target_link_libraries(digital_clock_v3 PRIVATE atomic)
+endif()
 target_link_options(digital_clock_v3 PRIVATE -static-libgcc -static-libstdc++)

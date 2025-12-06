@@ -24,6 +24,12 @@
       }
     },
     {
+      "name": "release-arm",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/release-arm",
+      "toolchainFile": "${sourceDir}/raspi-toolchain.cmake"
+    },
+    {
       "name": "debug-arm",
       "inherits": "debug",
       "binaryDir": "${sourceDir}/build/debug-arm",
@@ -38,6 +44,10 @@
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "release-arm",
+      "configurePreset": "release-arm"
     },
     {
       "name": "debug-arm",
