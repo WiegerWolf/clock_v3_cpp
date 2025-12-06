@@ -1,3 +1,5 @@
+![clock_v3_cpp](screenshot.png)
+
 # Building
 
 Run `cmake --preset release` to generate the build system and `cmake --build --preset release` to build the project.
