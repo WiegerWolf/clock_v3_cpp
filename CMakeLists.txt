@@ -100,3 +100,7 @@ target_link_options(digital_clock_v3 PRIVATE
     -static-libstdc++
     $<$<CONFIG:Release>:-s>  # Only adds -strip flag for Release builds
 )
+# Define APP_DEBUG only when building in Debug mode
+target_compile_definitions(digital_clock_v3 PRIVATE
+    $<$<CONFIG:Debug>:APP_DEBUG>
+)

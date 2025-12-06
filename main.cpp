@@ -226,9 +226,13 @@ public:
                                           SDL_LOGICAL_PRESENTATION_LETTERBOX)) {
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't set logical presentation: %s", SDL_GetError());
     }
+#ifdef APP_DEBUG
+    // Keep cursor visible in debug for easier window movement/closing
+#else
     if (!SDL_HideCursor()) {
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't hide cursor: %s", SDL_GetError());
     }
+#endif
 
     snow.Init(Config::screen_width, Config::screen_height, Config::num_snowflakes);
     bgLoaderThread = std::jthread(&Clock::FetchBackgroundImage, this);
@@ -373,8 +377,10 @@ private:
     dateLabel.draw(renderer.get());
     timeLabel.draw(renderer.get());
 
+#ifdef APP_DEBUG
     SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugTextFormat(renderer.get(), 10, 10, "FPS: %.2f", fps);
+#endif
 
     SDL_RenderPresent(renderer.get());
   }
