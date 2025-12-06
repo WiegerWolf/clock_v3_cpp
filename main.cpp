@@ -17,6 +17,7 @@
 #include <execution>
 #include <format>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <numbers>
@@ -47,7 +48,7 @@ constexpr int font_big_size = 382;
 constexpr int font_small_size = 48;
 constexpr int num_snowflakes = 666;
 constexpr const char *AppName = "Digital Clock v3";
-constexpr const char *AppVersion = "0.1.0";
+constexpr const char *AppVersion = "0.2.0";
 } // namespace Config
 
 struct BingImage {
@@ -56,18 +57,76 @@ struct BingImage {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BingImage, fullUrl, date)
 
-std::string getCurrentTime() {
-  auto t = std::time(nullptr);
-  auto tm = *std::localtime(&t);
-  return std::format("{}:{:02}", tm.tm_hour, tm.tm_min);
+struct CurrentWeather {
+  double temperature;
+  double windspeed;
+  int weathercode;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CurrentWeather, temperature, windspeed, weathercode)
+
+struct WeatherData {
+  CurrentWeather current_weather;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WeatherData, current_weather)
+
+// --- Weather Helpers ---
+namespace {
+const std::map<int, std::string_view> WEATHER_CODE_RU = {{0, "Ясно"},
+                                                         {1, "Редкие облака"},
+                                                         {2, "Переменная облачность"},
+                                                         {3, "Облачно"},
+                                                         {45, "Туман"},
+                                                         {48, "Изморозь"},
+                                                         {51, "Легкая морось"},
+                                                         {53, "Моросит"},
+                                                         {55, "Плотно моросит"},
+                                                         {56, "Ледяная морось"},
+                                                         {57, "Тяжелая ледяная морось"},
+                                                         {61, "Легкий дождик"},
+                                                         {63, "Дождь"},
+                                                         {65, "Ливень"},
+                                                         {66, "Холодный дождь"},
+                                                         {67, "Ледяной ливень"},
+                                                         {71, "Снежок"},
+                                                         {73, "Снегопад"},
+                                                         {75, "Сильный снегопад"},
+                                                         {77, "Снежный град"},
+                                                         {80, "Ливневый дождик"},
+                                                         {81, "Ливни"},
+                                                         {82, "Плотные ливни"},
+                                                         {85, "Снежный дождик"},
+                                                         {86, "Снежные дожди"},
+                                                         {95, "Небольшая гроза"},
+                                                         {96, "Гроза с маленьким градом"},
+                                                         {99, "Град с грозой"}};
+
+// TODO: unused in display string, but kept as requested
+std::string_view getWindspeedType(double windspeed) {
+  if (windspeed < 1)
+    return "штиль";
+  else if (windspeed <= 5)
+    return "ветерок";
+  else if (windspeed <= 10)
+    return "ветер";
+  else if (windspeed <= 15)
+    return "сильный ветер";
+  else if (windspeed <= 20)
+    return "шквальный ветер";
+  else
+    return "ураган";
 }
 
-namespace {
 constexpr std::array<std::string_view, 7> weekdays = {"воскресенье", "понедельник", "вторник", "среда",
                                                       "четверг",     "пятница",     "суббота"};
 constexpr std::array<std::string_view, 12> months = {"января", "февраля", "марта",    "апреля",  "мая",    "июня",
                                                      "июля",   "августа", "сентября", "октября", "ноября", "декабря"};
 } // namespace
+
+std::string getCurrentTime() {
+  auto t = std::time(nullptr);
+  auto tm = *std::localtime(&t);
+  return std::format("{}:{:02}", tm.tm_hour, tm.tm_min);
+}
 
 std::string getCurrentDate() {
   auto now = std::chrono::system_clock::now();
@@ -98,8 +157,6 @@ public:
     vertices.resize(count * 4);
     indices.resize(count * 6);
 
-    // Pre-fill indices (Standard Quad Pattern)
-    // This only needs to happen once.
     std::vector<int> indexPattern = {0, 1, 2, 2, 3, 0};
     for (size_t i = 0; i < flakes.size(); ++i) {
       int vStart = static_cast<int>(i * 4);
@@ -175,7 +232,7 @@ private:
     f.size = 2.0f + (f.depth * 3.0f);
     f.speedY = 30.0f + (f.depth * 60.0f);
     f.swayPhase = distPhase(gen);
-    f.swaySpeed = 1.0f + (f.depth * 2.0f); // Faster sway for closer flakes
+    f.swaySpeed = 1.0f + (f.depth * 2.0f);
     f.x = distX(gen);
     f.y = randomizeY ? distY(gen) : -f.size;
     float alphaVal = 0.2f + (f.depth * 0.8f);
@@ -203,7 +260,6 @@ public:
       SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create window/renderer: %s", SDL_GetError());
       return false;
     }
-    // Transfer ownership of the window and renderer to the unique_ptr
     window.reset(w);
     renderer.reset(r);
 
@@ -235,7 +291,11 @@ public:
 #endif
 
     snow.Init(Config::screen_width, Config::screen_height, Config::num_snowflakes);
+
+    // Start Data Threads
     bgLoaderThread = std::jthread(&Clock::FetchBackgroundImage, this);
+    weatherLoaderThread = std::jthread(&Clock::FetchWeather, this);
+
     lastPerformanceCounter = SDL_GetPerformanceCounter();
 
     return true;
@@ -264,11 +324,17 @@ private:
 
   SnowSystem snow;
 
+  // Background Image
   std::jthread bgLoaderThread;
   std::mutex bgImageLoaderMutex;
   std::string lastLoadedUrl;
   SurfacePtr pendingBgImage;
   TexturePtr bgTexture;
+
+  // Weather Data
+  std::jthread weatherLoaderThread;
+  std::mutex weatherMutex;
+  std::string weatherString;
 
   Uint64 lastPerformanceCounter = 0;
   double fps = 0.0;
@@ -284,6 +350,10 @@ private:
 
     void update(SDL_Renderer *renderer, TTF_Font *font, std::string_view newText, SDL_Color color, LayoutFunc layout) {
       if (text == newText && texture) return;
+      if (newText.empty()) {
+        texture.reset();
+        return;
+      }
       text = newText;
       SurfacePtr surf(TTF_RenderText_Blended(font, text.c_str(), 0, color));
       if (surf) {
@@ -310,6 +380,7 @@ private:
 
   TextLabel timeLabel;
   TextLabel dateLabel;
+  TextLabel weatherLabel;
 
   void FetchBackgroundImage(std::stop_token stopToken) {
     while (!stopToken.stop_requested()) {
@@ -345,6 +416,40 @@ private:
     }
   }
 
+  void FetchWeather(std::stop_token stopToken) {
+    while (!stopToken.stop_requested()) {
+      try {
+        cpr::Response response =
+            cpr::Get(cpr::Url{"https://api.open-meteo.com/v1/"
+                              "forecast?latitude=52.3738&longitude=4.8910&hourly=apparent_temperature,precipitation&"
+                              "current_weather=true&windspeed_unit=ms&timezone=auto"});
+        if (response.status_code == 200) {
+          auto json_data = json::parse(response.text);
+          WeatherData wd = json_data.template get<WeatherData>();
+
+          std::string_view description = "Неизвестно";
+          if (auto it = WEATHER_CODE_RU.find(wd.current_weather.weathercode); it != WEATHER_CODE_RU.end()) {
+            description = it->second;
+          }
+          // Format: 4°C, <weachercode_to_description>, <windspeed>м/с
+          std::string result = std::format("{:.0f}°C, {}, {:.1f}м/с", wd.current_weather.temperature, description,
+                                           wd.current_weather.windspeed);
+          {
+            std::lock_guard lock(weatherMutex);
+            weatherString = result;
+          }
+        }
+      } catch (const std::exception &e) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Weather fetch failed: %s", e.what());
+      }
+      std::mutex sleepMutex;
+      std::unique_lock lock(sleepMutex);
+      std::condition_variable_any().wait_for(lock, stopToken,
+                                             std::chrono::minutes(15), // Fetch weather every 15 minutes
+                                             [&stopToken] { return stopToken.stop_requested(); });
+    }
+  }
+
   void UpdateTiming() {
     Uint64 now = SDL_GetPerformanceCounter();
     Uint64 diff = now - lastPerformanceCounter;
@@ -358,11 +463,26 @@ private:
   void UpdateTextures() {
     SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
 
-    timeLabel.update(renderer.get(), fontBig.get(), getCurrentTime(), white, [](float w, float h) {
-      return SDL_FRect{(Config::screen_width - w) / 2.0f, (Config::screen_height - h) / 2.0f - 40.0f, w, h};
-    });
+    // Update Date
     dateLabel.update(renderer.get(), fontSmall.get(), getCurrentDate(), white,
-                     [](float w, float h) { return SDL_FRect{(Config::screen_width - w) / 2.0f, 30.0f, w, h}; });
+                     [](float w, float h) { return SDL_FRect{(Config::screen_width - w) / 2.0f, 60.0f, w, h}; });
+    // Update Time
+    timeLabel.update(renderer.get(), fontBig.get(), getCurrentTime(), white, [](float w, float h) {
+      return SDL_FRect{(Config::screen_width - w) / 2.0f, (Config::screen_height - h) / 2.0f - 20.0f, w, h};
+    });
+
+    // Update Weather
+    std::string currentW;
+    {
+      std::lock_guard lock(weatherMutex);
+      currentW = weatherString;
+    }
+    weatherLabel.update(renderer.get(), fontSmall.get(), currentW, white, [&](float w, float h) {
+      float timeBottom = timeLabel.rect.y + timeLabel.rect.h;
+      // If time texture isn't ready yet, guess a position, otherwise use relative
+      float yPos = (timeBottom > 0) ? timeBottom - 80.0f : (Config::screen_height / 2.0f + 140.0f);
+      return SDL_FRect{(Config::screen_width - w) / 2.0f, yPos, w, h};
+    });
   }
 
   void Render() {
@@ -376,6 +496,7 @@ private:
     snow.Draw(renderer.get());
     dateLabel.draw(renderer.get());
     timeLabel.draw(renderer.get());
+    weatherLabel.draw(renderer.get());
 
 #ifdef APP_DEBUG
     SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
