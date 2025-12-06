@@ -66,6 +66,56 @@ would return JSON, that looks like:
 }
 ```
 
+# Clothing advice via Cerebras API
+
+Set `CEREBRAS_API_KEY` env variable.
+
+POST https://api.cerebras.ai/v1/chat/completions with json payload:
+
+```json
+{
+    "model": "gpt-oss-120b",
+    "max_tokens": 300,
+    "temperature": 0.7,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant providing concise clothing advice."
+      },
+      {
+        "role": "user",
+        "content": "I live in Amsterdam. Today is <day> <month>, the time is <time> and the weather is: <weather_description>. What should I wear? Please answer in one short sentence, in russian. Only say what clothes I should wear, there's no need to mention city, current weather or time and date. Basically, just continue the phrase: You should wear..., without saying the 'you should wear' part."
+      }
+    ]
+}
+```
+
+and Auth Bearer <auth_token> header. It would return a JSON object with the following structure:
+
+```json
+{
+    "id": "chatcmpl-...",
+    "object": "chat.completion",
+    "created": 1677652288,
+    "model": "gpt-oss-120b",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "You should wear a light jacket and jeans."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 13,
+      "completion_tokens": 12,
+      "total_tokens": 25
+    }
+}
+```
+
 # clangd LSP Integration
 
 To get your editor pick up on dependencies headers, compile your project once in debug mode.
