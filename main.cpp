@@ -45,7 +45,8 @@ namespace Config {
 constexpr int screen_width = 1024;
 constexpr int screen_height = 600;
 constexpr int font_big_size = 382;
-constexpr int font_small_size = 48;
+constexpr int font_normal_size = 48;
+constexpr int font_small_size = 24;
 constexpr int num_snowflakes = 666;
 constexpr const char *AppName = "Digital Clock v3";
 constexpr const char *AppVersion = "0.2.0";
@@ -259,11 +260,13 @@ public:
     }
     SDL_IOStream *stream1 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
     // Note: SDL_ttf takes ownership of IOStream if closeio is true.
-    fontSmall.reset(TTF_OpenFontIO(stream1, true, Config::font_small_size));
-    // We create a second stream for the second font to avoid ownership ambiguity.
+    fontNormal.reset(TTF_OpenFontIO(stream1, true, Config::font_normal_size));
+    // We create more streams for the second & third font to avoid ownership ambiguity.
     SDL_IOStream *stream2 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
     fontBig.reset(TTF_OpenFontIO(stream2, true, Config::font_big_size));
-    if (!fontSmall || !fontBig) {
+    SDL_IOStream *stream3 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
+    fontSmall.reset(TTF_OpenFontIO(stream3, true, Config::font_small_size));
+    if (!fontNormal || !fontBig || !fontSmall) {
       SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't load embedded font: %s", SDL_GetError());
       return false;
     }
@@ -295,13 +298,6 @@ public:
     UpdateTiming();
     snow.Update(deltaTime);
     UpdateTextures();
-    {
-      std::lock_guard lock(bgImageLoaderMutex);
-      if (pendingBgImage) {
-        bgTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), pendingBgImage.get()));
-        pendingBgImage.reset();
-      }
-    }
     Render();
     return SDL_APP_CONTINUE;
   }
@@ -310,6 +306,7 @@ private:
   WindowPtr window;
   RendererPtr renderer;
   FontPtr fontBig;
+  FontPtr fontNormal;
   FontPtr fontSmall;
 
   SnowSystem snow;
@@ -458,9 +455,15 @@ private:
 
   void UpdateTextures() {
     SDL_Color white = {255, 255, 255, SDL_ALPHA_OPAQUE};
-
+    { // Update Background Image
+      std::lock_guard lock(bgImageLoaderMutex);
+      if (pendingBgImage) {
+        bgTexture.reset(SDL_CreateTextureFromSurface(renderer.get(), pendingBgImage.get()));
+        pendingBgImage.reset();
+      }
+    }
     // Update Date
-    dateLabel.update(renderer.get(), fontSmall.get(), getCurrentDate(), white,
+    dateLabel.update(renderer.get(), fontNormal.get(), getCurrentDate(), white,
                      [](float w, float h) { return SDL_FRect{(Config::screen_width - w) / 2.0f, 60.0f, w, h}; });
     // Update Time
     timeLabel.update(renderer.get(), fontBig.get(), getCurrentTime(), white, [](float w, float h) {
@@ -473,7 +476,7 @@ private:
       std::lock_guard lock(weatherMutex);
       currentW = weatherString;
     }
-    weatherLabel.update(renderer.get(), fontSmall.get(), currentW, white, [&](float w, float h) {
+    weatherLabel.update(renderer.get(), fontNormal.get(), currentW, white, [&](float w, float h) {
       float timeBottom = timeLabel.rect.y + timeLabel.rect.h;
       // If time texture isn't ready yet, guess a position, otherwise use relative
       float yPos = (timeBottom > 0) ? timeBottom - 80.0f : (Config::screen_height / 2.0f + 140.0f);
