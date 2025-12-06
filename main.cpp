@@ -98,21 +98,14 @@ const std::map<int, std::string_view> WEATHER_CODE_RU = {{0, "ясно"},
                                                          {95, "небольшая гроза"},
                                                          {96, "гроза с маленьким градом"},
                                                          {99, "град с грозой"}};
-std::string_view getWindspeedType(double windspeed) {
-  if (windspeed < 1)
-    return "штиль";
-  else if (windspeed <= 5)
-    return "ветерок";
-  else if (windspeed <= 10)
-    return "ветер";
-  else if (windspeed <= 15)
-    return "сильный ветер";
-  else if (windspeed <= 20)
-    return "шквальный ветер";
-  else
-    return "ураган";
+[[nodiscard]] std::string_view getWindspeedType(double windspeed) {
+  if (windspeed < 1.0) return "штиль";
+  if (windspeed <= 5.0) return "ветерок";
+  if (windspeed <= 10.0) return "ветер";
+  if (windspeed <= 15.0) return "сильный ветер";
+  if (windspeed <= 20.0) return "шквальный ветер";
+  return "ураган";
 }
-
 constexpr std::array<std::string_view, 7> weekdays = {"воскресенье", "понедельник", "вторник", "среда",
                                                       "четверг",     "пятница",     "суббота"};
 constexpr std::array<std::string_view, 12> months = {"января", "февраля", "марта",    "апреля",  "мая",    "июня",
@@ -414,34 +407,32 @@ private:
   }
 
   void FetchWeather(std::stop_token stopToken) {
+    const auto url = cpr::Url{"https://api.open-meteo.com/v1/forecast"};
+    const auto params = cpr::Parameters{{"latitude", "52.3738"},
+                                        {"longitude", "4.8910"},
+                                        {"current_weather", "true"},
+                                        {"windspeed_unit", "ms"},
+                                        {"timezone", "auto"}};
+
     while (!stopToken.stop_requested()) {
       try {
-        cpr::Response response = cpr::Get(cpr::Url{"https://api.open-meteo.com/v1/forecast"
-                                                   "?latitude=52.3738"
-                                                   "&longitude=4.8910"
-                                                   "&current_weather=true"
-                                                   "&windspeed_unit=ms"
-                                                   "&timezone=auto"});
+        cpr::Response response = cpr::Get(url, params);
         if (response.status_code == 200) {
           auto json_data = json::parse(response.text);
-          WeatherData wd = json_data.template get<WeatherData>();
-          std::string description = "Неизвестно";
+          auto wd = json_data.get<WeatherData>();
+          std::string_view weatherDesc = "Неизвестно";
           if (auto it = WEATHER_CODE_RU.find(wd.current_weather.weathercode); it != WEATHER_CODE_RU.end()) {
-            description = std::string(it->second);
+            weatherDesc = it->second;
           }
           double ws = wd.current_weather.windspeed;
-          description += ", ";
-          description += getWindspeedType(ws);
+          std::string windStr(getWindspeedType(ws));
           if (ws >= 1.0) {
-            long roundedWind = std::lround(ws);
-            description += " ";
-            description += std::to_string(roundedWind);
-            description += " м/с";
+            windStr = std::format("{} {:.0f} м/с", windStr, ws);
           }
-          std::string result = std::format("{:.0f}°C, {}", wd.current_weather.temperature, description);
+          std::string result = std::format("{:.0f}°C, {}, {}", wd.current_weather.temperature, weatherDesc, windStr);
           {
-            std::lock_guard lock(weatherMutex);
-            weatherString = result;
+            std::scoped_lock lock(weatherMutex);
+            weatherString = std::move(result);
           }
         }
       } catch (const std::exception &e) {
