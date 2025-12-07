@@ -46,10 +46,17 @@ constexpr int screen_width = 1024;
 constexpr int screen_height = 600;
 constexpr int font_big_size = 382;
 constexpr int font_normal_size = 48;
-constexpr int font_small_size = 24;
+constexpr int font_small_size = 32;
 constexpr int num_snowflakes = 666;
 constexpr const char *AppName = "Digital Clock v3";
-constexpr const char *AppVersion = "0.2.0";
+constexpr const char *AppVersion = "0.2.1";
+
+// CEREBRAS_API_KEY is defined via CMake target_compile_definitions
+#ifndef CEREBRAS_API_KEY
+constexpr const char *CerebrasApiKey = "";
+#else
+constexpr const char *CerebrasApiKey = CEREBRAS_API_KEY;
+#endif
 } // namespace Config
 
 struct BingImage {
@@ -69,6 +76,23 @@ struct WeatherData {
   CurrentWeather current_weather;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WeatherData, current_weather)
+
+struct LlmMessage {
+  std::string role;
+  std::string content;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(LlmMessage, role, content)
+struct LlmChoice {
+  int index;
+  LlmMessage message;
+  std::string finish_reason;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(LlmChoice, index, message, finish_reason)
+struct LlmResponse {
+  std::string id;
+  std::vector<LlmChoice> choices;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(LlmResponse, id, choices)
 
 namespace {
 const std::map<int, std::string_view> WEATHER_CODE_RU = {{0, "ясно"},
@@ -106,6 +130,19 @@ const std::map<int, std::string_view> WEATHER_CODE_RU = {{0, "ясно"},
   if (windspeed <= 15.0) return "сильный ветер";
   if (windspeed <= 20.0) return "шквальный ветер";
   return "ураган";
+}
+[[nodiscard]] std::string getBasicAdvice(double temperature) {
+  if (temperature < -10) {
+    return "Наденьте теплую зимнюю куртку, шапку, шарф и теплые ботинки.";
+  } else if (temperature < 0) {
+    return "Наденьте зимнюю куртку и теплые аксессуары.";
+  } else if (temperature < 10) {
+    return "Наденьте куртку и шапку.";
+  } else if (temperature < 20) {
+    return "Наденьте легкую куртку или свитер.";
+  } else {
+    return "Наденьте легкую одежду.";
+  }
 }
 constexpr std::array<std::string_view, 7> weekdays = {"воскресенье", "понедельник", "вторник", "среда",
                                                       "четверг",     "пятница",     "суббота"};
@@ -258,14 +295,12 @@ public:
       SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't initialize SDL_ttf: %s", SDL_GetError());
       return false;
     }
-    SDL_IOStream *stream1 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
-    // Note: SDL_ttf takes ownership of IOStream if closeio is true.
-    fontNormal.reset(TTF_OpenFontIO(stream1, true, Config::font_normal_size));
-    // We create more streams for the second & third font to avoid ownership ambiguity.
-    SDL_IOStream *stream2 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
-    fontBig.reset(TTF_OpenFontIO(stream2, true, Config::font_big_size));
-    SDL_IOStream *stream3 = SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len);
-    fontSmall.reset(TTF_OpenFontIO(stream3, true, Config::font_small_size));
+    fontNormal.reset(TTF_OpenFontIO(SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len), true,
+                                    Config::font_normal_size));
+    fontBig.reset(TTF_OpenFontIO(SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len), true,
+                                 Config::font_big_size));
+    fontSmall.reset(TTF_OpenFontIO(SDL_IOFromConstMem(BellotaText_Bold_ttf, BellotaText_Bold_ttf_len), true,
+                                   Config::font_small_size));
     if (!fontNormal || !fontBig || !fontSmall) {
       SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Couldn't load embedded font: %s", SDL_GetError());
       return false;
@@ -323,6 +358,10 @@ private:
   std::mutex weatherMutex;
   std::string weatherString;
 
+  // Clothing Advice (LLM)
+  std::mutex adviceMutex;
+  std::string adviceString;
+
   Uint64 lastPerformanceCounter = 0;
   double fps = 0.0;
   double deltaTime = 0.0;
@@ -331,18 +370,29 @@ private:
     std::string text;
     TexturePtr texture;
     SDL_FRect rect;
+    // Store last wrap width to detect changes needed if window resizes (though fixed logical size simplifies this)
+    int lastWrapWidth = 0;
 
     // Layout function to position the text label within the window
     using LayoutFunc = std::function<SDL_FRect(float w, float h)>;
 
-    void update(SDL_Renderer *renderer, TTF_Font *font, std::string_view newText, SDL_Color color, LayoutFunc layout) {
-      if (text == newText && texture) return;
+    void update(SDL_Renderer *renderer, TTF_Font *font, std::string_view newText, SDL_Color color, LayoutFunc layout,
+                int wrapWidth = 0) {
+      if (text == newText && texture && wrapWidth == lastWrapWidth) return;
       if (newText.empty()) {
         texture.reset();
         return;
       }
       text = newText;
-      SurfacePtr surf(TTF_RenderText_Blended(font, text.c_str(), 0, color));
+      lastWrapWidth = wrapWidth;
+
+      SurfacePtr surf;
+      if (wrapWidth > 0) {
+        surf.reset(TTF_RenderText_Blended_Wrapped(font, text.c_str(), 0, color, wrapWidth));
+      } else {
+        surf.reset(TTF_RenderText_Blended(font, text.c_str(), 0, color));
+      }
+
       if (surf) {
         texture.reset(SDL_CreateTextureFromSurface(renderer, surf.get()));
         rect = layout((float)surf->w, (float)surf->h);
@@ -368,6 +418,7 @@ private:
   TextLabel timeLabel;
   TextLabel dateLabel;
   TextLabel weatherLabel;
+  TextLabel adviceLabel;
 
   void FetchBackgroundImage(std::stop_token stopToken) {
     while (!stopToken.stop_requested()) {
@@ -412,6 +463,9 @@ private:
                                         {"timezone", "auto"}};
 
     while (!stopToken.stop_requested()) {
+      std::string weatherDescForLLM = "unknown";
+      double tempForLLM = 0.0;
+      bool weatherFetched = false;
       try {
         cpr::Response response = cpr::Get(url, params);
         if (response.status_code == 200) {
@@ -421,6 +475,8 @@ private:
           if (auto it = WEATHER_CODE_RU.find(wd.current_weather.weathercode); it != WEATHER_CODE_RU.end()) {
             weatherDesc = it->second;
           }
+          weatherDescForLLM = std::string(weatherDesc);
+          tempForLLM = wd.current_weather.temperature;
           double ws = wd.current_weather.windspeed;
           std::string windStr(getWindspeedType(ws));
           if (ws >= 1.0) {
@@ -430,11 +486,64 @@ private:
           {
             std::scoped_lock lock(weatherMutex);
             weatherString = std::move(result);
+            weatherFetched = true;
           }
         }
       } catch (const std::exception &e) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Weather fetch failed: %s", e.what());
       }
+      if (weatherFetched) {
+        std::string finalAdvice;
+        std::string apiKey = Config::CerebrasApiKey;
+        auto useFallback = [&]() { finalAdvice = getBasicAdvice(tempForLLM); };
+        if (!apiKey.empty() && apiKey != "MISSING_KEY") {
+          try {
+            std::string prompt = std::format(
+                "I live in Amsterdam. Today is {}, the time is {} and the weather is: {} ({:.0f}C). "
+                "What should I wear? Please answer in one short sentence, in russian. "
+                "Only say what clothes I should wear, there's no need to mention city, current weather or time and "
+                "date. "
+                "Basically, just continue the phrase: You should wear..., without saying the 'you should wear' part.",
+                getCurrentDate(), getCurrentTime(), weatherDescForLLM, tempForLLM);
+            json payload = {
+                {"model", "gpt-oss-120b"},
+                {"max_tokens", 300},
+                {"temperature", 0.7},
+                {"messages",
+                 {{{"role", "system"}, {"content", "You are a helpful assistant providing concise clothing advice."}},
+                  {{"role", "user"}, {"content", prompt}}}}};
+            cpr::Response r = cpr::Post(
+                cpr::Url{"https://api.cerebras.ai/v1/chat/completions"}, cpr::Body{payload.dump()},
+                cpr::Header{{"Authorization", std::string("Bearer ") + apiKey}, {"Content-Type", "application/json"}});
+            if (r.status_code == 200) {
+              auto llmResp = json::parse(r.text).get<LlmResponse>();
+              if (!llmResp.choices.empty()) {
+                finalAdvice = llmResp.choices[0].message.content;
+                if (finalAdvice.size() > 1 && finalAdvice.front() == '"' && finalAdvice.back() == '"') {
+                  finalAdvice = finalAdvice.substr(1, finalAdvice.size() - 2);
+                }
+              } else {
+                useFallback();
+              }
+            } else {
+              SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "LLM fetch failed code %ld: %s", r.status_code,
+                           r.text.c_str());
+              useFallback();
+            }
+          } catch (const std::exception &e) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "LLM fetch exception: %s", e.what());
+            useFallback();
+          }
+        } else {
+          // No valid key
+          useFallback();
+        }
+        {
+          std::lock_guard lock(adviceMutex);
+          adviceString = finalAdvice;
+        }
+      }
+
       std::mutex sleepMutex;
       std::unique_lock lock(sleepMutex);
       std::condition_variable_any().wait_for(lock, stopToken,
@@ -482,6 +591,22 @@ private:
       float yPos = (timeBottom > 0) ? timeBottom - 80.0f : (Config::screen_height / 2.0f + 140.0f);
       return SDL_FRect{(Config::screen_width - w) / 2.0f, yPos, w, h};
     });
+
+    std::string currentAdvice;
+    {
+      std::lock_guard lock(adviceMutex);
+      currentAdvice = adviceString;
+    }
+    // Wrap at 80% screen width
+    int wrapW = static_cast<int>(Config::screen_width * 0.8f);
+    adviceLabel.update(
+        renderer.get(), fontSmall.get(), currentAdvice, white,
+        [&](float w, float h) {
+          float weatherBottom = weatherLabel.rect.y + weatherLabel.rect.h;
+          float yPos = weatherBottom + 10.0f; // 10px padding
+          return SDL_FRect{(Config::screen_width - w) / 2.0f, yPos, w, h};
+        },
+        wrapW);
   }
 
   void Render() {
@@ -496,6 +621,7 @@ private:
     dateLabel.draw(renderer.get());
     timeLabel.draw(renderer.get());
     weatherLabel.draw(renderer.get());
+    adviceLabel.draw(renderer.get());
 
 #ifdef APP_DEBUG
     SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
