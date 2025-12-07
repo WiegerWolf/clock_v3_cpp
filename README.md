@@ -38,6 +38,42 @@ cmake --preset release-arm
 cmake --build --preset release-arm
 ```
 
+Then copy the binary to the Raspberry Pi:
+
+```sh
+scp build/release-arm/digital_clock_v3 <username>@<hostname>:~
+```
+
+## Autostart
+
+```bash
+sudo vim /etc/systemd/system/digital-clock.service
+```
+
+`digital-clock.service`:
+
+```
+[Unit]
+Description=Digital Clock Service
+After=network.target
+
+[Service]
+Type=simple
+User=n
+WorkingDirectory=/home/n
+ExecStart=/home/n/digital_clock_v3
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable digital-clock.service
+sudo systemctl start digital-clock.service
+```
+
 # Attribution
 
 - BellotaText Bold font used in this project is licensed under the [Open Font License](https://openfontlicense.org).
