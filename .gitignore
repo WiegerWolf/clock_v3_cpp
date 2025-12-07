@@ -6,3 +6,4 @@ cmake-build-debug/
 .cache/
 pi_sysroot/
 __cmake_systeminformation/
+.env
