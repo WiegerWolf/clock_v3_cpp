@@ -55,7 +55,7 @@ FetchContent_Declare(SDL3_Image
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_image.git
     GIT_TAG release-3.2.4)
 # Options to make cross-compiling Image easier (use built-in codecs)
-set(SDL3IMAGE_BACKEND_STB ON CACHE BOOL "" FORCE) 
+set(SDL3IMAGE_BACKEND_STB ON CACHE BOOL "" FORCE)
 set(SDL3IMAGE_BACKEND_IMAGEIO OFF CACHE BOOL "" FORCE)
 set(SDL3IMAGE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(SDL3_Image)
@@ -90,17 +90,25 @@ target_link_libraries(digital_clock_v3
         SDL3_image::SDL3_image
         SDL3_ttf::SDL3_ttf
 )
-# Since we are cross-compiling static, we sometimes need to explicitly link atomic 
-# if the dep libraries don't propagate it correctly on ARM.
+# Since we are cross-compiling static, we sometimes need to explicitly link
+# atomic if the dep libraries don't propagate it correctly on ARM.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
     target_link_libraries(digital_clock_v3 PRIVATE atomic)
 endif()
-target_link_options(digital_clock_v3 PRIVATE 
-    -static-libgcc 
+target_link_options(digital_clock_v3 PRIVATE
+    -static-libgcc
     -static-libstdc++
     $<$<CONFIG:Release>:-s>  # Only adds -strip flag for Release builds
 )
-# Define APP_DEBUG only when building in Debug mode
+
+if(NOT DEFINED CEREBRAS_API_KEY)
+    set(CEREBRAS_API_KEY $ENV{CEREBRAS_API_KEY})
+endif()
+if(NOT CEREBRAS_API_KEY)
+    message(WARNING "CEREBRAS_API_KEY not found in environment. LLM features will not work.")
+    set(CEREBRAS_API_KEY "MISSING_KEY")
+endif()
 target_compile_definitions(digital_clock_v3 PRIVATE
     $<$<CONFIG:Debug>:APP_DEBUG>
+    CEREBRAS_API_KEY="${CEREBRAS_API_KEY}"
 )
