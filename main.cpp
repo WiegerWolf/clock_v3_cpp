@@ -597,8 +597,7 @@ private:
       std::lock_guard lock(adviceMutex);
       currentAdvice = adviceString;
     }
-    // Wrap at 80% screen width
-    int wrapW = static_cast<int>(Config::screen_width * 0.8f);
+    int wrapW = static_cast<int>(Config::screen_width * 0.95f);
     adviceLabel.update(
         renderer.get(), fontSmall.get(), currentAdvice, white,
         [&](float w, float h) {
