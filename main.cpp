@@ -506,14 +506,14 @@ private:
                 "Basically, just continue the phrase: You should wear..., without saying the 'you should wear' part.",
                 getCurrentDate(), getCurrentTime(), weatherDescForLLM, tempForLLM);
             json payload = {
-                {"model", "gpt-oss-120b"},
+                {"model", "openai/gpt-oss-120b"},
                 {"max_tokens", 300},
                 {"temperature", 0.7},
                 {"messages",
                  {{{"role", "system"}, {"content", "You are a helpful assistant providing concise clothing advice."}},
                   {{"role", "user"}, {"content", prompt}}}}};
             cpr::Response r = cpr::Post(
-                cpr::Url{"https://api.cerebras.ai/v1/chat/completions"}, cpr::Body{payload.dump()},
+                cpr::Url{"https://api.groq.com/openai/v1/chat/completions"}, cpr::Body{payload.dump()},
                 cpr::Header{{"Authorization", std::string("Bearer ") + apiKey}, {"Content-Type", "application/json"}});
             if (r.status_code == 200) {
               auto llmResp = json::parse(r.text).get<LlmResponse>();
