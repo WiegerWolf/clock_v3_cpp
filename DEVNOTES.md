@@ -66,11 +66,11 @@ would return JSON, that looks like:
 }
 ```
 
-# Clothing advice via Cerebras API
+# Clothing advice via Groq API
 
-Set `CEREBRAS_API_KEY` env variable.
+Set `GROQ_API_KEY` env variable.
 
-POST https://api.cerebras.ai/v1/chat/completions with json payload:
+POST https://api.groq.com/openai/v1/chat/completions with json payload:
 
 ```json
 {

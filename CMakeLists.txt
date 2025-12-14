@@ -101,14 +101,14 @@ target_link_options(digital_clock_v3 PRIVATE
     $<$<CONFIG:Release>:-s>  # Only adds -strip flag for Release builds
 )
 
-if(NOT DEFINED CEREBRAS_API_KEY)
-    set(CEREBRAS_API_KEY $ENV{CEREBRAS_API_KEY})
+if(NOT DEFINED GROQ_API_KEY)
+    set(GROQ_API_KEY $ENV{GROQ_API_KEY})
 endif()
-if(NOT CEREBRAS_API_KEY)
-    message(WARNING "CEREBRAS_API_KEY not found in environment. LLM features will not work.")
-    set(CEREBRAS_API_KEY "MISSING_KEY")
+if(NOT GROQ_API_KEY)
+    message(WARNING "GROQ_API_KEY not found in environment. LLM features will not work.")
+    set(GROQ_API_KEY "MISSING_KEY")
 endif()
 target_compile_definitions(digital_clock_v3 PRIVATE
     $<$<CONFIG:Debug>:APP_DEBUG>
-    CEREBRAS_API_KEY="${CEREBRAS_API_KEY}"
+    GROQ_API_KEY="${GROQ_API_KEY}"
 )

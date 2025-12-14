@@ -2,7 +2,7 @@
 
 # Environment Variables
 
-Set the `CEREBRAS_API_KEY` environment variable to your Cerebras API key if you want to get clothing advice from the Cerebras API.
+Set the `GROQ_API_KEY` environment variable to your Groq API key if you want to get clothing advice from the Groq API.
 
 # Building
 

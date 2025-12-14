@@ -51,11 +51,11 @@ constexpr int num_snowflakes = 666;
 constexpr const char *AppName = "Digital Clock v3";
 constexpr const char *AppVersion = "0.2.1";
 
-// CEREBRAS_API_KEY is defined via CMake target_compile_definitions
-#ifndef CEREBRAS_API_KEY
-constexpr const char *CerebrasApiKey = "";
+// GROQ_API_KEY is defined via CMake target_compile_definitions
+#ifndef GROQ_API_KEY
+constexpr const char *GroqApiKey = "";
 #else
-constexpr const char *CerebrasApiKey = CEREBRAS_API_KEY;
+constexpr const char *GroqApiKey = GROQ_API_KEY;
 #endif
 } // namespace Config
 
@@ -494,7 +494,7 @@ private:
       }
       if (weatherFetched) {
         std::string finalAdvice;
-        std::string apiKey = Config::CerebrasApiKey;
+        std::string apiKey = Config::GroqApiKey;
         auto useFallback = [&]() { finalAdvice = getBasicAdvice(tempForLLM); };
         if (!apiKey.empty() && apiKey != "MISSING_KEY") {
           try {
