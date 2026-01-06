@@ -27,6 +27,10 @@ To build debug version, run `cmake --preset debug` and then `cmake --build --pre
 
 ## Preparing cross-compilation environment
 
+```sh
+sudo apt install rsync symlinks gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+```
+
 Set up `libcurl` with openSSL support on your Raspberry Pi (cpr is gonna link against it).
 
 You need to setup `./pi_sysroot` folder. Connect your RPi SD card to your computer and mount it.
