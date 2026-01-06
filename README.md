@@ -32,7 +32,7 @@ Set up `libcurl` with openSSL support on your Raspberry Pi (cpr is gonna link ag
 You need to setup `./pi_sysroot` folder. Connect your RPi SD card to your computer and mount it.
 And no, you can't just copy the files from the SD card img file you downloaded from the Raspberry Pi website.
 You need the actual files from the SD card you're running on. _Alternatively, you can run `./pi_sysroot.sh <username> <hostname>` to
-do the below over the network,_ but plugging in the SD card and mounting it is sometimes faster.
+do the below over the network (make sure you have `rsync` installed),_ but plugging in the SD card and mounting it is sometimes faster.
 
 Then run while being inside `/` on the `rootfs` partition (replace `~/clock_v3_cpp/pi_sysroot` with the actual path):
 
